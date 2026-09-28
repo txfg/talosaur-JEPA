@@ -16,11 +16,16 @@ source:
     AeExposureMode: 1               # "short": less motion blur, more gain
     AwbEnable: true
 
-recording:
+recording:                          # docs/PI5.md section 6
   enabled: true
+  mode: continuous                  # continuous: the whole run, never switched off | events: only around encounters
   out_dir: recordings
-  bitrate: 6000000
-  preroll_s: 5                      # keeps the approach, but encodes all the time; 0 = encode only while recording (docs/PI5.md §6)
+  bitrate: 6000000                  # 6 Mbit/s = 2.7 GB per hour
+  segment_s: 300                    # continuous: a new file every 5 min, cut at a keyframe (no frames lost)
+  format: mpegts                    # continuous: .ts plays up to the last frame even after a power cut
+  min_free_mb: 2000                 # continuous: below this, free space by deleting the oldest footage WITHOUT animals ...
+  low_disk: delete_empty            # ... (delete_empty) or stop recording (stop); animal footage is never deleted
+  preroll_s: 5                      # events mode only: seconds kept before each encounter
 
 guidance:                           # tuning guide: docs/PI5.md section 11
   heat_thr: 0.5                     # a blob needs at least one patch with p(animal) >= this ...

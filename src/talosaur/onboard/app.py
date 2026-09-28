@@ -6,7 +6,8 @@
       --runtime ort_fp32          # camera/recording/UDP check with the toy colour model (talosaur.onboard.toy_model)
 
 Never imports torch. Telemetry (state, target, track, command, latency) goes to the configured
-backends (JSONL log and/or JSON over UDP); recording follows the state machine. Each animal is
+backends (JSONL log and/or JSON over UDP). Video is recorded for the whole run by default
+(``recording.mode: continuous``, in segments). Each animal is
 filmed for at most ``guidance.encounter.max_s``; every encounter (animal, duration, reason it
 ended, video files) is appended to ``encounter_log`` (default logs/encounters.jsonl).
 """
@@ -28,7 +29,7 @@ from talosaur.guidance.novelty import NoveltyDetector
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
 from talosaur.onboard import sysinfo
 from talosaur.onboard.camera import Picamera2Source, SyntheticSource, VideoFileSource
-from talosaur.onboard.recorder import NullRecorder, Picamera2Recorder
+from talosaur.onboard.recorder import ContinuousRecorder, NullRecorder, Picamera2Recorder
 from talosaur.onboard.runtime import load_runner, preprocess
 from talosaur.utils.io import load_yaml
 from talosaur.utils.log import get_logger
@@ -64,16 +65,31 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
     else:
         raise ValueError(f"unknown source {src_kind!r}")
     rc = cfg.get("recording", {})
-    recorder = NullRecorder()
+    mode = rc.get("mode", "continuous")
+    if mode not in ("continuous", "events"):
+        raise ValueError(f"recording.mode must be continuous or events, not {mode!r}")
+    recorder = NullRecorder(continuous=mode == "continuous")
     if src_kind == "picamera2" and rc.get("enabled", True):
         try:
-            recorder = Picamera2Recorder(
-                source.cam,
-                rc.get("out_dir", "recordings"),
-                int(rc.get("bitrate", 6_000_000)),
-                float(rc.get("preroll_s", 5.0)),
-                float(sc.get("fps", 15)),
-            )
+            if mode == "continuous":
+                recorder = ContinuousRecorder(
+                    source.cam,
+                    rc.get("out_dir", "recordings"),
+                    int(rc.get("bitrate", 6_000_000)),
+                    float(sc.get("fps", 15)),
+                    segment_s=float(rc.get("segment_s", 300)),
+                    fmt=rc.get("format", "mpegts"),
+                    min_free_mb=float(rc.get("min_free_mb", 2000)),
+                    low_disk=rc.get("low_disk", "delete_empty"),
+                )
+            else:
+                recorder = Picamera2Recorder(
+                    source.cam,
+                    rc.get("out_dir", "recordings"),
+                    int(rc.get("bitrate", 6_000_000)),
+                    float(rc.get("preroll_s", 5.0)),
+                    float(sc.get("fps", 15)),
+                )
         except Exception:
             source.close()  # release the camera, or the next start fails with "device busy"
             raise
@@ -102,9 +118,8 @@ def run(
     t_stats = time.monotonic()
     stats_every = float(cfg.get("stats_every_s", 10.0))
     states: dict[str, int] = {}
-    n_recordings = 0
+    n_clips = 0
     encounters: list[dict] = []
-    enc_files: list[str] = []
     enc_log = cfg.get("encounter_log", "logs/encounters.jsonl")
     if guidance.cfg.encounter.reid and not runner.spec.tokens:
         log.warning(
@@ -113,7 +128,11 @@ def run(
         )
 
     def _encounter_done(summary: dict) -> None:
-        rec = {"kind": "encounter", **summary, "recordings": list(enc_files)}
+        # the video files (and offsets) that show this animal; in continuous mode this also marks
+        # those segments as animal footage, which the low-disk guard never deletes
+        files = recorder.files_between(summary["t_start"], summary["t_end"])
+        recorder.protect_since = None
+        rec = {"kind": "encounter", **summary, "recordings": files}
         encounters.append(rec)
         backend.publish(rec)
         if enc_log:
@@ -141,16 +160,16 @@ def run(
             cmd, tele, events = guidance.step(fr.t, out.frame, out.heat, out.emb, out.tokens)
             for ev in events:
                 if ev == "encounter_start":
-                    enc_files = []
-                elif ev == "start_recording":
+                    recorder.protect_since = fr.t
+                elif ev == "start_recording":  # a clip around an encounter (events mode records only these)
+                    n_clips += 1
                     recorder.start(fr.t)
-                    n_recordings += 1
-                    if recorder.path:
-                        enc_files.append(str(recorder.path))
                 elif ev == "stop_recording":
                     recorder.stop(fr.t)
             if "encounter_summary" in tele:
                 _encounter_done(tele["encounter_summary"])
+            recorder.tick(fr.t)
+            tele["recording"] = bool(recorder.recording)
             lat.append(t_inf * 1000)
             loop_t.append(time.perf_counter() - t_loop)
             tele["kind"] = "guidance"
@@ -167,16 +186,18 @@ def run(
                     f"fps {fps:.1f} | infer p50 {np.percentile(lat, 50):.1f} ms p95 {np.percentile(lat, 95):.1f} | "
                     f"state {tele['state']} | rss {snap['rss_mb']} MB avail {snap['mem_available_mb']} MB | {snap['cpu_temp_c']:.1f} C"
                 )
-                backend.publish(
-                    {"t": fr.t, "kind": "stats", "fps": fps, **snap, "throttled": sysinfo.throttled()}
-                )
+                stats = {"t": fr.t, "kind": "stats", "fps": fps, **snap, "throttled": sysinfo.throttled()}
+                if hasattr(recorder, "free_mb"):
+                    stats["disk_free_mb"] = round(recorder.free_mb(), 0)
+                    stats["recording"] = recorder.recording
+                backend.publish(stats)
             if max_frames and n >= max_frames:
                 break
     finally:
         last = guidance.close(t_last)
         if last:
             _encounter_done(last)
-        recorder.close()
+        recorder.close(t_last)
         source.close()
         backend.close()
         for s, hnd in old_handlers.items():
@@ -184,7 +205,8 @@ def run(
     summary = {
         "frames": n,
         "states": states,
-        "recordings": n_recordings,
+        "clips": n_clips,
+        "segments": len(getattr(recorder, "segments", [])),
         "encounters": [
             {k: e[k] for k in ("id", "reason", "engaged_s", "film_s", "resumed")} for e in encounters
         ],

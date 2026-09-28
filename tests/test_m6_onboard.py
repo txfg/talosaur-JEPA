@@ -16,7 +16,7 @@ from conftest import HAS_AV, HAS_ORT, HAS_PIL
 
 from talosaur.onboard import sysinfo
 from talosaur.onboard.camera import Picamera2Source, SyntheticSource, yuv420_to_rgb
-from talosaur.onboard.recorder import NullRecorder, Picamera2Recorder
+from talosaur.onboard.recorder import ContinuousRecorder, NullRecorder, Picamera2Recorder
 from talosaur.onboard.runtime import (
     ModelSpec,
     available_runtimes,
@@ -188,7 +188,7 @@ def test_app_runs_the_full_loop_on_synthetic_frames(toy_export, tmp_path):
 
     summary = run(_app_cfg(toy_export, tmp_path))
     assert summary["frames"] == 120
-    assert summary["states"].get("TRACK", 0) > 30 and summary["recordings"] >= 1
+    assert summary["states"].get("TRACK", 0) > 30 and summary["clips"] >= 1
     rows = [json.loads(line) for line in (tmp_path / "tele.jsonl").read_text().splitlines()]
     guid = [r for r in rows if r["kind"] == "guidance"]
     assert len(guid) == 120 and any(r["kind"] == "stats" for r in rows)
@@ -279,6 +279,8 @@ class _FakeCam:
 
     def start_encoder(self, encoder, output):
         self.calls.append(("start_encoder", type(output).__name__))
+        if type(output).__name__ == "SplittableOutput":  # picamera2 starts the output with the encoder
+            output.start()
 
     def stop_encoder(self):
         self.calls.append("stop_encoder")
@@ -321,9 +323,34 @@ def fake_picamera2(monkeypatch):
         def stop(self):
             self.log.append(("stop", self.fileoutput))
 
+    class PyavOutput:  # like picamera2's: the container file is opened on start()
+        def __init__(self, output_name, format=None, pts=None, options=None):
+            self.name, self.format, self.started, self.stopped = output_name, format, False, False
+
+        def start(self):
+            Path(self.name).write_bytes(b"\x47" * 188)  # one MPEG-TS packet's worth
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+    class SplittableOutput:
+        def __init__(self, output=None):
+            self.output, self.splits = output, []
+
+        def start(self):
+            self.output.start()
+
+        def split_output(self, new_output, wait_for_keyframe=True):
+            new_output.start()
+            old, self.output = self.output, new_output
+            old.stop()
+            self.splits.append(new_output.name)
+
     pkg.Picamera2 = picamera2_factory
     enc.H264Encoder = H264Encoder
     outs.FileOutput, outs.CircularOutput = FileOutput, CircularOutput
+    outs.PyavOutput, outs.SplittableOutput = PyavOutput, SplittableOutput
     pkg.encoders, pkg.outputs = enc, outs
     for name, mod in (("picamera2", pkg), ("picamera2.encoders", enc), ("picamera2.outputs", outs)):
         monkeypatch.setitem(sys.modules, name, mod)
@@ -385,6 +412,87 @@ def test_recording_rollover_never_overwrites(fake_picamera2, tmp_path):
         paths.append(rec.path)
         rec.stop(0.0)
     assert len(set(paths)) == 3 and all(p.name.endswith(f"_{i + 1:03d}.h264") for i, p in enumerate(paths))
+
+
+def _continuous(fake_picamera2, tmp_path, **kw):
+    Picamera2Source((208, 112))
+    return ContinuousRecorder(fake_picamera2["cam"], tmp_path / "rec", fps=15, segment_s=10, t0=0.0, **kw)
+
+
+def _run_clock(rec, t_end: float, dt: float = 0.5):
+    for t in np.arange(0.0, t_end, dt):
+        rec.tick(float(t))
+        rec.wait_rotation()
+
+
+def test_continuous_recorder_never_stops_and_maps_encounters_to_files(fake_picamera2, tmp_path):
+    rec = _continuous(fake_picamera2, tmp_path)
+    cam = fake_picamera2["cam"]
+    assert rec.recording and ("start_encoder", "SplittableOutput") in cam.calls
+    assert rec.path.suffix == ".ts" and rec.path.exists()
+    _run_clock(rec, 25.0)
+    assert len(rec.segments) == 3 and all(s["path"].exists() for s in rec.segments)  # 0-10, 10-20, 20-
+    assert rec.segments[1]["t0"] == pytest.approx(10.0, abs=0.1)
+    rec.start(3.0)  # the state machine's clip events do not stop continuous recording
+    rec.stop(4.0)
+    assert rec.recording and "stop_encoder" not in cam.calls
+    files = rec.files_between(8.0, 12.0)  # an encounter across the first split
+    assert [f["file"] for f in files] == [rec.segments[0]["path"].name, rec.segments[1]["path"].name]
+    assert files[0]["offset_s"] == pytest.approx(8.0) and files[1]["offset_s"] == 0.0
+    assert rec.segments[0]["keep"] and rec.segments[1]["keep"] and not rec.segments[2]["keep"]
+    rec.close(25.0)
+    assert not rec.recording and cam.calls[-1] == "stop_encoder"
+    index = [json.loads(line) for line in rec.index_path.read_text().splitlines()]
+    assert [i["event"] for i in index] == ["closed"] * 3 and index[-1]["t1"] == 25.0
+
+
+def test_continuous_recorder_low_disk_deletes_only_footage_without_animals(
+    fake_picamera2, tmp_path, monkeypatch
+):
+    rec = _continuous(fake_picamera2, tmp_path, min_free_mb=1000)
+    _run_clock(rec, 35.0)  # segments 0-10, 10-20, 20-30, 30- (open)
+    rec.files_between(12.0, 15.0)  # an animal in segment 1
+    # pretend each deleted segment frees 300 MB, starting from 500 MB free
+    monkeypatch.setattr(
+        ContinuousRecorder, "free_mb", lambda self: 500.0 + 300.0 * sum(s["deleted"] for s in self.segments)
+    )
+    rec.protect_since = 25.0  # an encounter started at 25 s: nothing after it may go
+    rec.check_disk(35.0)
+    assert [s["deleted"] for s in rec.segments] == [True, False, False, False]
+    assert rec.recording  # 800 MB left, only protected / animal footage: keep recording, warn
+    rec.protect_since = None
+    rec.check_disk(36.0)
+    assert [s["deleted"] for s in rec.segments] == [True, False, True, False]
+    assert not rec.segments[0]["path"].exists() and rec.segments[1]["path"].exists()
+    monkeypatch.setattr(ContinuousRecorder, "free_mb", lambda self: 100.0)
+    rec.check_disk(37.0)  # critical and nothing left to delete: stop to protect the system
+    assert not rec.recording and rec.segments[1]["path"].exists()
+
+
+def test_continuous_recorder_low_disk_stop_policy(fake_picamera2, tmp_path, monkeypatch):
+    rec = _continuous(fake_picamera2, tmp_path, min_free_mb=1000, low_disk="stop")
+    _run_clock(rec, 15.0)
+    monkeypatch.setattr(ContinuousRecorder, "free_mb", lambda self: 900.0)
+    rec.check_disk(15.0)
+    assert not rec.recording and all(s["path"].exists() for s in rec.segments)
+    with pytest.raises(ValueError):
+        _continuous(fake_picamera2, tmp_path, low_disk="panic")
+
+
+@requires_toy
+def test_app_records_continuously_with_the_camera(fake_picamera2, toy_export, tmp_path):
+    from talosaur.onboard.app import run
+
+    cfg = _app_cfg(toy_export, tmp_path)
+    cfg["source"] = {"kind": "picamera2", "main_size": [1280, 720], "fps": 15}
+    cfg["recording"].update(mode="continuous", out_dir=str(tmp_path / "rec"), segment_s=300)
+    summary = run(cfg, max_frames=20)
+    cam = fake_picamera2["cam"]
+    assert ("start_encoder", "SplittableOutput") in cam.calls
+    assert cam.calls.count("stop_encoder") == 1 and summary["segments"] == 1  # stopped only at shutdown
+    rows = [json.loads(line) for line in (tmp_path / "tele.jsonl").read_text().splitlines()]
+    guid = [r for r in rows if r["kind"] == "guidance"]
+    assert len(guid) == 20 and all(r["recording"] for r in guid)
 
 
 # ----------------------------------------------------------------------------- benchmark and replay

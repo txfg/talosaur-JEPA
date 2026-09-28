@@ -178,7 +178,8 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
   - `heave` > 0 = ascend;
   - `surge` > 0 = forward, < 0 = back off.
 - `state` is one of SEARCH, ACQUIRE, TRACK, FILM, LOST and RELEASE (moving on after an animal's time budget, §12).
-- `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame.
+- `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame. The recording events mark where an encounter clip begins and ends; only events mode cuts files at them.
+- `recording` says whether video is being written. It is always true in continuous mode unless the disk guard had to stop.
 - `encounter` (`id`, `engaged_s`, `remaining_s`) is the animal being filmed. `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
 - At the end of each encounter, a `kind: "encounter"` message summarises it (§12).
 
@@ -190,23 +191,42 @@ with a hard stand-off. The bridge should treat a message older than ~0.5 s (by r
 ## 6. Recording
 
 The Pi 5 has **no hardware H.264 encoder**. picamera2's `H264Encoder` is the software libav/x264
-encoder there, and it competes with inference for the four cores. The recording follows the state
-machine: it starts on entering TRACK, continues through FILM and LOST, and stops `postroll_s`
-after leaving them, either back to SEARCH or into RELEASE when the animal's time budget is used up
-(§12). Long recordings roll over into a new file every `max_record_s`.
+encoder there, and it competes with inference for the four cores.
+
+**Continuous (default, `recording.mode: continuous`).** The main stream is recorded for the whole
+run. The state machine never switches it off.
+- **Segments.** A new file starts every `segment_s` (5 min), switched at a keyframe so no frame is
+  lost: `recordings/talosaur_<session>_00001.ts`, `_00002.ts`, and so on.
+- **Crash-safe format.** Segments are MPEG-TS. A file cut short by a power loss or crash still
+  plays up to that point, unlike an unfinished MP4. VLC plays `.ts` directly. To convert without
+  re-encoding: `ffmpeg -i x.ts -c copy x.mp4`.
+- **Segment index.** `talosaur_<session>_segments.jsonl` lists every segment with its start and
+  end on the app clock, its wall-clock start, and whether it shows an animal.
+- **Encounter log.** Each line of `logs/encounters.jsonl` lists the files that show that animal and
+  the offset into the first one: `"recordings": [{"file": "..._00007.ts", "offset_s": 212.4}]`.
+- **Storage.** 6 Mbit/s is 2.7 GB per hour. The app logs the free space and the hours it allows at
+  start, and adds `disk_free_mb` to its stats messages. For long dives, use a large, fast card or an
+  NVMe SSD on the Pi 5's PCIe port.
+- **Low disk.** Below `min_free_mb` (2 GB), `low_disk: delete_empty` deletes the oldest finished
+  segments that show **no** animal. It never deletes animal footage or anything since the current
+  encounter began. `low_disk: stop` stops recording instead. Either way, recording stops below
+  `min_free_mb / 4` so the Pi's own filesystem never fills up.
+
+**Encounters only (`recording.mode: events`).** Files only around encounters: from entering TRACK,
+through FILM and LOST, until `postroll_s` after leaving them. This saves storage. With
+`preroll_s: 0` the encoder runs only while recording, which also saves CPU during SEARCH.
 
 | setting | effect |
 |---|---|
-| `recording.preroll_s: 5` (default) | the encoder runs **all the time** into a 5 s ring buffer, so the approach before TRACK is saved; pays the encoder CPU while searching |
-| `recording.preroll_s: 0` | the encoder runs only while recording; loses the approach footage, saves the CPU during SEARCH |
+| `recording.mode: continuous` (default) | the encoder runs all the time; everything is kept |
+| `recording.mode: events`, `preroll_s: 5` | the encoder runs all the time into a 5 s ring buffer; only encounters are saved, with the approach |
+| `recording.mode: events`, `preroll_s: 0` | the encoder runs only while recording; loses the approach, saves CPU during SEARCH |
 | `source.main_size: [1280, 720]` (default) vs `[1920, 1080]` | 720p costs roughly half the encode CPU of 1080p |
-| `recording.bitrate: 6000000` | 6 Mbit/s ≈ 2.7 GB per hour of recording |
 | a separate action camera | no Pi CPU at all; vision still decides where to point the vehicle |
 
-Files are raw H.264 (`recordings/talosaur_YYYYmmdd_HHMMSS_NNN.h264`; `logs/encounters.jsonl` says
-which animal each file shows). Wrap one without re-encoding:
-`ffmpeg -framerate 15 -i talosaur_X.h264 -c copy talosaur_X.mp4`. The encoder writes a keyframe
-every second, so the pre-roll starts at most 1 s later than configured.
+Events-mode files are raw H.264 (`talosaur_YYYYmmdd_HHMMSS_NNN.h264`). Wrap one without
+re-encoding: `ffmpeg -framerate 15 -i talosaur_X.h264 -c copy talosaur_X.mp4`. The encoder writes a
+keyframe every second, so segment switches, and the pre-roll in events mode, are accurate to 1 s.
 
 ## 7. Memory budget (1 GB)
 
@@ -299,11 +319,12 @@ toward the target, so a target crossing the frame never looks centred for long.
 Each animal gets a time budget. When it is used up, the sub stops documenting that animal, moves
 away, and looks for a *different* one. Settings are under `guidance.encounter` in `pi5.yaml`.
 
-1. **Encounter.** Locking onto an animal (ACQUIRE → TRACK) starts an encounter: a new id and a
-   recording.
+1. **Encounter.** Locking onto an animal (ACQUIRE → TRACK) starts an encounter with a new id. In the
+   default continuous mode the video is already running; in events mode a clip starts.
 2. **Budget** (`max_s`, default 60 s). Time in TRACK, FILM and LOST counts. When it is used up, the
    state machine enters **RELEASE**:
-   - the recording stops after its post-roll;
+   - the video keeps running in continuous mode, and the encounter log marks where this animal is
+     in it; in events mode the clip stops after its post-roll;
    - the sub backs off (`controller.release_backoff_s`);
    - it turns away from the side the animal was on (`release_turn_s`);
    - it swims on for the rest of `fsm.release_s` (default 12 s);
