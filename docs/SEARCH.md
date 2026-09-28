@@ -5,7 +5,175 @@ light**, and what it records. The design is grounded in the literature on twilig
 AUV search and foraging theory (§1, cited), and compared in a closed-loop simulator (§7). The
 simulator is a caricature of the ocean; your own dives replace its numbers.
 
-<!-- EVIDENCE -->
+## 1. What the evidence says
+
+**How much to trust each finding.** Most journal sites are blocked from the environment this was
+built in. Each finding therefore says how it was checked:
+
+- **abstract**: the paper's abstract, read through search-engine extracts;
+- **abstract, 3/3**: also confirmed against its quote by three independent reviewers;
+- **search**: from search results only, which may paraphrase. Treat these as leads to read
+  before relying on them;
+- **source code** or **docs**: read in full.
+
+Where a finding comes from another place (Monterey Bay, Arctic fjords), applying it to the Gulf
+is an extrapolation, and says so.
+
+### 1.1 Where the animals are, and when
+
+- **By day the main layer is far below 200 m.** A ship-mounted 38 kHz ADCP in the northern Gulf
+  (summers 2002–2003) found the main deep scattering layer at 450–550 m by day. The exception was
+  near a front with Mississippi River plume water, where it rose to 200–300 m. *(abstract;
+  [Kaltenberg et al. 2007](https://aquila.usm.edu/goms/vol25/iss2/1/))*
+- **At dusk the migrators cross 100–200 m and end up above it.** At a northern Gulf site, part of
+  the mesopelagic backscatter moved into the upper epipelagic, shallower than 100 m, while
+  staying below the thermocline. At night the 100–200 m band held a more variable mix of species,
+  consistent with animals also redistributing within the upper water column. This was a single
+  30-hour survey in June 2011. *(abstract, 3/3;
+  [D'Elia et al. 2016](https://www.sciencedirect.com/science/article/abs/pii/S0967063715301989))*
+- **Timing.** A 10-year moored ADCP record in the western Gulf (2008–2018) gives the timing:
+  - the shallowest migrating group starts rising about 1 h before sunset and starts descending
+    about 2 h before sunrise;
+  - backscatter is highest from the surface to about 100 m and at 400–600 m;
+  - the effect of the moon is clearest at 1000–1200 m, not in the upper water column.
+
+  *(abstract; [Ursella et al. 2021](https://www.sciencedirect.com/science/article/abs/pii/S0079661121000495))*
+
+**What the planner does with this.** Treat 100–200 m as a corridor:
+- profile the whole range first;
+- favour the corridor while the migrators cross it, starting earlier at dawn than at dusk;
+- favour shallow bands at night;
+- use no prior by day, and expect few animals at 100–200 m then.
+
+### 1.2 How animals react to the vehicle
+
+- **Light, red included, drives animals away.** Pelagic fish and zooplankton strongly avoided
+  white, blue and red (575–700 nm) light on lowered instruments. Density fell by up to 99%, and
+  avoidance reached 23–94 m from the light, depending on colour, brightness and community. This
+  was measured with echosounders, so the lights did not bias the measurement. The sites were
+  Arctic fjords in the polar night and coastal Newfoundland; the Gulf is an extrapolation.
+  *(abstract; [Geoffroy et al. 2021](https://www.nature.com/articles/s41598-021-94355-6))*
+- **Far-red is least disturbing, and species differ.** With no vehicle present (a fixed camera in
+  Monterey Canyon), sablefish stayed in view longer under far-red (695 nm) than under red
+  (685 nm) or white light. They often fled when white light came on, and sometimes when red did.
+  Pacific grenadier did not flee in the same way. *(abstract;
+  [Raymond & Widder 2007](https://www.int-res.com/abstracts/meps/v350/p291-298/))*
+- **Speed matters.** A review of 48 demersal taxa found almost all react to underwater vehicles.
+  Running an ROV at 0.5 instead of 0.25 m/s cut density estimates by 21–55% for some species.
+  *(search; [Stoner et al. 2008](https://cdnsciencepub.com/doi/10.1139/F08-032))*
+- **Fish flee vehicles.** Fish change their behaviour around AUVs, and a vehicle can predict and
+  stay outside their flight-initiation distance. The work covers reef fish. *(search;
+  [Cai et al. 2025](https://arxiv.org/abs/2506.11335), preprint)*
+
+**What the planner does with this.**
+- The lamp stays off whenever the camera can see, and is dim when it cannot (§4). Use far-red if
+  possible.
+- Approaches are slow (`controller.max_surge`).
+- An animal that flees is let go rather than chased.
+
+### 1.3 How to search
+
+- **Find the layer on the first pass, then work it.** On a yo-yo through a layer, MBARI's AUVs find
+  the peak on the first crossing and act at that level on the next. A drifting LRAUV followed a
+  layer for four days. *(search;
+  [Zhang et al. 2019](https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2019.00415/full))*
+- **Composite search.** For targets that stay where they are found, searching intensively after a
+  find and giving up after a set time beats a Lévy walk. *(search;
+  [Plank & James 2008](https://royalsocietypublishing.org/doi/10.1098/rsif.2008.0006))*
+- **Plan in the water frame.** An AUV ran its survey pattern in the drifting frame of a
+  drifter-marked water patch. This is the precedent for water-relative search plans.
+  *(search; [Das et al. 2012](https://journals.sagepub.com/doi/10.1177/0278364912440736))*
+- **Position error breaks fixed patterns.** Coverage has to account for pose uncertainty, because a
+  submerged AUV's position drifts with no global fix. *(search;
+  [Paull et al. 2014](https://ieeexplore.ieee.org/document/6907832/))*
+- **What MBARI does.** Its midwater video transects run at about 0.5 m/s, for 10 min, at 100 m depth
+  steps, and an AUV (i2MAP) now repeats them. *(search;
+  [i2MAP, OCEANS 2016](https://ieeexplore.ieee.org/document/7761499/))*
+
+**What the planner does with this.**
+- Depth bands chosen from detections.
+- Long legs with an intensive search after each find.
+- A coverage map in the water frame that fades over time.
+- Nothing depends on geographic x/y.
+
+### 1.4 How long to film
+
+- **Foraging theory has been applied to vehicles.** The patch model (the marginal value theorem)
+  decides when to leave a patch; it has been proposed as the design rule for autonomous vehicles
+  choosing tasks. *(search;
+  [Andrews, Passino & Waite 2007](https://link.springer.com/article/10.1007/s10846-007-9138-9))*
+- **The same rule has been used for attention across video streams.** Switch when the expected
+  information rate falls below the average available elsewhere. *(search;
+  [Napoletano et al. 2015](https://arxiv.org/abs/1410.5605))*
+- **Gelatinous animals tolerate very long follows, so the vehicle has to decide to leave.**
+  - MBARI's ML tracker followed a siphonophore for 5.27 h
+    *(search; [Katija et al. 2021](https://openaccess.thecvf.com/content/WACV2021/papers/Katija_Visual_Tracking_of_Deepwater_Animals_Using_Machine_Learning-Controlled_Robotic_Underwater_WACV_2021_paper.pdf))*.
+  - Mesobot followed a giant larvacean autonomously for about 30–40 min. A pilot found its
+    targets: search was not automated
+    *(search; [Yoerger et al. 2021](https://www.science.org/doi/10.1126/scirobotics.abe1901))*.
+  - Mesobot still damaged the larvacean's fragile house, so long close follows have a cost.
+
+**What the planner does with this.** The leave rule of §3, with a hard cap, and early exits
+for animals that flee or never give a good shot.
+
+### 1.5 JEPA and world models
+
+- **Full latent planning is far too slow for a Pi.** Planning with V-JEPA 2-AC by the
+  cross-entropy method takes about 16 s per action on an RTX 4090. It uses a 300M-parameter
+  predictor on a 1B-parameter encoder, is a goal-image reacher rather than an explorer, and was
+  post-trained on under 62 h of robot video. *(abstract;
+  [Assran et al. 2025](https://arxiv.org/abs/2506.09985))* DINO-WM's cross-entropy plans take
+  tens of seconds on a desktop GPU. *(search; [Zhou et al. 2025](https://arxiv.org/abs/2411.04983))*
+- **The nearest underwater precedent is a preprint.** DINO-Explorer uses a small action-conditioned
+  predictor of frozen DINOv3 features. Its prediction error acts as "semantic surprise", with
+  optical flow discounting the vehicle's own motion, which removed 45.5% of false positives. It
+  was evaluated only for event triage and telemetry, not for closed-loop search, and not onboard.
+  *(abstract; [Jin et al. 2026](https://arxiv.org/abs/2604.12933), preprint)*
+- **A cheap novelty bonus.** How far an embedding lies outside the ellipse of embeddings seen so
+  far is an exploration bonus that fits embedded compute. *(search;
+  [Henaff et al. 2022, E3B](https://arxiv.org/abs/2210.05805))*
+- **Small JEPA world models exist.** One of about 15M parameters plans in about 1 s, on a GPU.
+  *(search; [Maes et al. 2026](https://arxiv.org/abs/2603.19312), preprint)*
+- **Offloading the encoder.** Raspberry Pi's AI HATs could run the encoder and free the CPU for a
+  predictor. A custom ViT must first be compiled with Hailo's tools. *(search;
+  [Raspberry Pi AI HAT docs](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html))*
+
+**What the planner does with this.** §6: embeddings for novelty and appearance now; a small
+predictor trained on your own dive logs later; no full latent planning on the Pi.
+
+### 1.6 Recording
+
+- **picamera2's `SplittableOutput` switches files without losing frames.** Every encoded frame goes
+  to the old or the new file, and by default the switch waits for a keyframe.
+  - `split_output()` blocks until the switch, so it must be called from a thread other than the
+    one delivering frames.
+  - With no output attached, frames are silently dropped.
+
+  The recorder starts with a file attached and switches in a background thread.
+  *(source code;
+  [splittableoutput.py](https://github.com/raspberrypi/picamera2/blob/main/picamera2/outputs/splittableoutput.py))*
+- **The Pi 5 has no hardware H.264 encoder.** picamera2 uses software libx264 with the
+  `ultrafast` preset and `zerolatency` tuning. *(source code;
+  [libav_h264_encoder.py](https://github.com/raspberrypi/picamera2/blob/main/picamera2/encoders/libav_h264_encoder.py);
+  docs: [rpicam-vid](https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/camera/rpicam_vid.adoc))*
+- **An unfinished MP4 is unreadable.** A normal MP4 that was never finalized cannot be decoded,
+  which is why segments are MPEG-TS. *(docs;
+  [FFmpeg muxers](https://github.com/FFmpeg/FFmpeg/blob/master/doc/muxers.texi))*
+- **Other Pi cameras leave gaps.** FishCam, a Raspberry Pi underwater camera, restarts the camera
+  for every file, leaving gaps of about 2 s. For continuous recording it recommends
+  high-endurance microSD cards. *(docs; [FishCam](https://github.com/xaviermouy/FishCam))*
+
+### 1.7 What could not be established
+
+- **Densities.** How many animals per cubic metre a small camera meets at 100–200 m in the Gulf.
+  The simulator's densities are guesses; your dive logs replace them (§7).
+- **The camera.** Whether the Camera Module 3 sees anything at 100–200 m at night without light.
+  Probably not, which is why the lamp rule measures instead of assuming (§4).
+- **Gulf species and light.** How Gulf twilight-zone species respond to red and far-red light
+  specifically.
+- **Timing at your site.** Migration timing by season and at your dive site. The prior only
+  nudges the planner; the detections decide.
+
 
 ## 2. What the planner does
 
@@ -36,7 +204,7 @@ Everything is built from what stays reliable underwater: **depth** (pressure sen
    - While the migrators cross the corridor (100–200 m by default), its bands start with 3× the
      prior rate: from 1 h before to 1.5 h after sunset, and from 2.5 h before to 0.5 h after
      sunrise (`dusk_h`, `dawn_h`). In the Gulf the ascent starts about an hour before sunset and
-     the descent about two hours before sunrise (§1).
+     the descent about two hours before sunrise (§1.1).
    - At night, bands near `night_depth_m` are favoured.
    - By day, no prior.
    - Set `sunrise_h` / `sunset_h` to the times of sunrise and sunset at the dive site on the
@@ -51,7 +219,7 @@ Everything is built from what stays reliable underwater: **depth** (pressure sen
 
 - **Extensive mode.** Long straight relocation legs (`leg_s`, 90 s, randomised ±30%) at a slow
   speed (`surge`), with large turns (`turn_deg`).
-- **Intensive mode.** Any detection, and the end of every encounter, switch to a tight local
+- **Intensive mode.** Any find, and the end of every encounter, switch to a tight local
   search: short legs (`ars_leg_s`), sharper turns, slower. Animals come in patches, so where there
   is one there are likely more. If nothing turns up within `giveup_s` (2 min), it switches back to
   long legs.
@@ -154,7 +322,7 @@ into the segments by file and time offset.
 - **Used now.**
   - The pooled I-JEPA embedding gives a running "something new in view" novelty score. It is a
     Mahalanobis distance to recent embeddings, the same idea as the elliptical episodic bonus used
-    for exploration in reinforcement learning.
+    for exploration in reinforcement learning (E3B, §1.5).
   - The patch tokens give each animal an appearance descriptor, used to recognise animals already
     filmed and to weight novel ones.
 - **Realistic next.**
@@ -164,6 +332,6 @@ into the segments by file and time offset.
     commands). It could score a few candidate headings one step ahead.
 - **Not realistic on a Pi 5.** Full latent planning in the style of V-JEPA 2-AC or DINO-WM, which
   runs a cross-entropy-method search over a large predictor, takes seconds per action on a desktop
-  GPU (see §1).
+  GPU (§1.5).
 
 <!-- SIMULATOR -->
