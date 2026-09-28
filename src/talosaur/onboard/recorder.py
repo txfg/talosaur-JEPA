@@ -26,6 +26,7 @@ log = get_logger("recorder")
 
 class NullRecorder:
     recording = False
+    path = None  # the file being (or last) written
 
     def start(self, t: float) -> None:
         self.recording = True
@@ -53,6 +54,8 @@ class Picamera2Recorder:
         self.encoder = H264Encoder(bitrate=bitrate, iperiod=max(1, int(round(fps))), framerate=fps)
         self.preroll_s = preroll_s
         self.recording = False
+        self.path: Path | None = None
+        self.seq = 0
         self.output = CircularOutput(buffersize=max(1, int(preroll_s * fps))) if preroll_s > 0 else None
         if self.output is not None:
             self.cam.start_encoder(self.encoder, self.output)  # continuous encode into the ring buffer
@@ -60,7 +63,10 @@ class Picamera2Recorder:
     def start(self, t: float) -> None:
         if self.recording:
             return
-        path = self.out_dir / f"talosaur_{time.strftime('%Y%m%d_%H%M%S')}.h264"
+        # the sequence number keeps a roll-over (stop + start in the same second) from overwriting
+        self.seq += 1
+        path = self.out_dir / f"talosaur_{time.strftime('%Y%m%d_%H%M%S')}_{self.seq:03d}.h264"
+        self.path = path
         if self.output is not None:
             self.output.fileoutput = str(path)
             self.output.start()

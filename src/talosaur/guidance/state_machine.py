@@ -1,16 +1,23 @@
-"""SEARCH -> ACQUIRE -> TRACK -> FILM -> LOST -> SEARCH, plus recording decisions.
+"""SEARCH -> ACQUIRE -> TRACK <-> FILM -> LOST -> SEARCH, RELEASE, plus recording decisions.
 
 * SEARCH: slow scan; "animal present" needs ``acquire_n`` of the last ``acquire_m`` frames
   (frame probability or heatmap peak above threshold) to leave SEARCH - one bright speck
-  does not trigger anything.
+  does not trigger anything. Animals already filmed are filtered out before this (encounters.py).
 * ACQUIRE: the tracker must confirm the target (``confirm_hits`` updates) -> TRACK, else back to
   SEARCH after ``acquire_timeout_s`` (the detection window is cleared, so re-acquiring needs
   ``acquire_n`` fresh detections).
-* TRACK: servo on the target and approach to the stand-off size. Recording starts on entering
-  TRACK (the pre-roll buffer keeps the approach).
+* TRACK: servo on the target and approach to the stand-off size. Entering TRACK starts an
+  *encounter* and the recording (the pre-roll buffer keeps the approach).
 * FILM: target centred and at a good size for ``film_hold_s`` -> hold framing (no approach).
 * LOST: tracker lost the target -> turn toward the last bearing for ``lost_timeout_s``; re-acquire
-  -> TRACK, else SEARCH. Recording stops ``postroll_s`` after leaving TRACK/FILM/LOST.
+  -> TRACK (same encounter), else SEARCH (encounter ends, reason "lost").
+* RELEASE: the encounter's time budget is used up (``release=True`` from the caller) -> back off,
+  turn away and swim on for ``release_s`` while ignoring detections, then SEARCH for another
+  animal (encounter ends, reason "budget").
+
+Recording stops ``postroll_s`` after leaving TRACK/FILM/LOST, so RELEASE also ends the recording.
+Events: ``encounter_start`` / ``encounter_end`` (see ``end_reason``), ``start_recording`` /
+``stop_recording``, ``state:<NAME>`` - in that order within one frame.
 """
 
 from __future__ import annotations
@@ -29,6 +36,10 @@ class State(str, Enum):
     TRACK = "TRACK"
     FILM = "FILM"
     LOST = "LOST"
+    RELEASE = "RELEASE"
+
+
+ENGAGED = (State.TRACK, State.FILM, State.LOST)
 
 
 @dataclass
@@ -44,6 +55,7 @@ class FSMConfig:
     lost_timeout_s: float = 4.0
     postroll_s: float = 3.0
     max_record_s: float = 300.0
+    release_s: float = 12.0  # length of the move-on manoeuvre after an animal's time budget
 
 
 class GuidanceFSM:
@@ -56,23 +68,33 @@ class GuidanceFSM:
         self.rec_since = 0.0
         self.film_ok_since: float | None = None
         self.left_active_at: float | None = None
+        self.end_reason: str | None = None
 
     def _go(self, s: State, t: float) -> None:
         self.state, self.since = s, t
 
-    def update(self, t: float, frame_prob: float, target: Target, track: TrackState) -> list[str]:
-        """Advance one frame. Returns events: ``start_recording`` / ``stop_recording`` / ``state:<NAME>``."""
+    def update(
+        self, t: float, frame_prob: float, target: Target, track: TrackState, release: bool = False
+    ) -> list[str]:
+        """Advance one frame. ``release``: the current animal's time budget is used up."""
         c = self.cfg
         events: list[str] = []
         prev = self.state
         detected = (frame_prob >= c.frame_on or target.peak >= c.heat_on) and target.found
         self.recent.append(detected)
-        if self.state == State.SEARCH:
+        if self.state in ENGAGED and release:
+            self._go(State.RELEASE, t)
+            self.end_reason = "budget"
+            self.film_ok_since = None
+            events.append("encounter_end")
+        elif self.state == State.SEARCH:
             if sum(self.recent) >= c.acquire_n:
                 self._go(State.ACQUIRE, t)
         elif self.state == State.ACQUIRE:
             if track.confirmed:
                 self._go(State.TRACK, t)
+                self.end_reason = None
+                events.append("encounter_start")
             elif t - self.since > c.acquire_timeout_s or not track.active:
                 self._go(State.SEARCH, t)
                 self.recent.clear()  # re-acquiring needs fresh evidence (no SEARCH/ACQUIRE flapping)
@@ -96,9 +118,14 @@ class GuidanceFSM:
             elif t - self.since > c.lost_timeout_s:
                 self._go(State.SEARCH, t)
                 self.recent.clear()
+                self.end_reason = "lost"
+                events.append("encounter_end")
+        elif self.state == State.RELEASE:
+            if t - self.since >= c.release_s:
+                self._go(State.SEARCH, t)
+                self.recent.clear()
 
-        active = self.state in (State.TRACK, State.FILM, State.LOST)
-        if active:
+        if self.state in ENGAGED:
             self.left_active_at = None
             if not self.recording:
                 self.recording, self.rec_since = True, t

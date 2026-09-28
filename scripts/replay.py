@@ -5,8 +5,10 @@
       --runtime ort_int8 --pi-fps 8 --out replay_dive.mp4
 
 ``--pi-fps`` drops frames to the frame rate you measured on the Pi, so the tracker and state
-machine see what the vehicle would see. Overlay: heatmap, target centroid, track, state, command
-bars and a red dot while "recording".
+machine see what the vehicle would see. Overlay: heatmap, target centroid, track, state, the
+current encounter (animal id and time left), the appearance similarity to animals already filmed,
+command bars and a red dot while "recording". Writes <out>.jsonl (per-frame telemetry) and
+<out>.encounters.jsonl (one line per animal).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ STATE_COLORS = {
     "TRACK": (0, 200, 255),
     "FILM": (0, 255, 120),
     "LOST": (255, 80, 80),
+    "RELEASE": (200, 120, 255),
 }
 
 
@@ -66,10 +69,19 @@ def annotate(frame: np.ndarray, heat_logit: np.ndarray, tele: dict, cam) -> np.n
         d.ellipse([tx - r, ty - r, tx + r, ty + r], outline=col, width=3)
     d.rectangle([0, 0, W, 26], fill=(0, 0, 0))
     txt = f"{tele['state']:<7} p(animal)={tele['frame_prob']:.2f}"
+    enc = tele.get("encounter")
+    if enc:
+        left = "" if enc["remaining_s"] is None else f", {enc['remaining_s']:.0f}s left"
+        txt += f"  animal #{enc['id']} ({enc['engaged_s']:.0f}s{left})"
+    reid = tele.get("reid") or {}
+    if reid.get("sim") is not None:
+        txt += f"  sim={reid['sim']:.2f}"
+    if reid.get("skipped"):
+        txt += f"  ignoring {reid['skipped']} filmed"
     if tele.get("novelty") is not None:
-        txt += f" novelty={tele['novelty']:.1f}"
+        txt += f"  novelty={tele['novelty']:.1f}"
     if tr["active"]:
-        txt += f" yaw={tr['yaw']:+.0f} pitch={tr['pitch']:+.0f} size={tr['size']:.2f}"
+        txt += f"  yaw={tr['yaw']:+.0f} pitch={tr['pitch']:+.0f} size={tr['size']:.2f}"
     d.text((8, 6), txt, fill=col)
     cmd = tele["cmd"]
     for i, (k, v) in enumerate((("yaw", cmd["yaw_rate"]), ("heave", cmd["heave"]), ("surge", cmd["surge"]))):
@@ -110,24 +122,30 @@ def main(argv=None) -> int:
     src = VideoFileSource(a.video, size=(W, H), keep_full=True, max_fps=a.pi_fps)
     out = Path(a.out)
     tele_path = out.with_suffix(".jsonl")
+    enc_path = out.with_suffix(".encounters.jsonl")
     container = None
     stream = None
     n = 0
+    t = 0.0
     states: dict[str, int] = {}
+    encounters = []
     with open(tele_path, "w") as tf:
         while True:
             fr = src.read()
             if fr is None or (a.max_frames and n >= a.max_frames):
                 break
-            f, h, e = runner(preprocess(fr.rgb, (H, W)))
+            t = fr.t
+            o = runner.run(preprocess(fr.rgb, (H, W)))
             if guid.novelty is None and gcfg.novelty:
-                guid.novelty = NoveltyDetector(int(np.asarray(e).size))
-            _, tele, _ = guid.step(fr.t, f, h, e)
+                guid.novelty = NoveltyDetector(int(np.asarray(o.emb).size))
+            _, tele, _ = guid.step(fr.t, o.frame, o.heat, o.emb, o.tokens)
             tf.write(json.dumps(tele) + "\n")
+            if "encounter_summary" in tele:
+                encounters.append(tele["encounter_summary"])
             states[tele["state"]] = states.get(tele["state"], 0) + 1
             full = fr.full
             oh = int(round(full.shape[0] * a.width / full.shape[1])) // 2 * 2
-            vis = annotate(resize_u8(full, oh, a.width), h, tele, gcfg.camera)
+            vis = annotate(resize_u8(full, oh, a.width), o.heat, tele, gcfg.camera)
             if container is None:
                 container = av.open(str(out), mode="w")
                 stream = container.add_stream("libx264", rate=int(round(a.pi_fps)))
@@ -136,12 +154,27 @@ def main(argv=None) -> int:
             for pkt in stream.encode(av.VideoFrame.from_ndarray(vis, format="rgb24")):
                 container.mux(pkt)
             n += 1
+    last = guid.close(t)
+    if last:
+        encounters.append(last)
+    enc_path.write_text("".join(json.dumps(e) + "\n" for e in encounters))
     if container is not None:
         for pkt in stream.encode():
             container.mux(pkt)
         container.close()
     src.close()
-    print(json.dumps({"frames": n, "states": states, "video": str(out), "telemetry": str(tele_path)}))
+    print(
+        json.dumps(
+            {
+                "frames": n,
+                "states": states,
+                "encounters": len(encounters),
+                "video": str(out),
+                "telemetry": str(tele_path),
+                "encounter_log": str(enc_path),
+            }
+        )
+    )
     return 0
 
 

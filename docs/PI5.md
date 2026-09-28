@@ -1,10 +1,11 @@
 # Raspberry Pi 5 onboard runtime (M6)
 
 How to set up the Pi 5 (1 GB), benchmark the exported models on it, run the onboard vision loop
-(camera → model → guidance → commands + recording), and tune guidance on recorded video.
+(camera → model → guidance → commands + recording, one animal at a time), and tune guidance on
+recorded video.
 
 Everything here was built and tested on x86. The picamera2 calls are tested against a stand-in
-that follows the picamera2 0.3.37 API. **Nothing has run on a real Pi yet.** §12 lists what
+that follows the picamera2 0.3.37 API. **Nothing has run on a real Pi yet.** §14 lists what
 still needs checking on hardware.
 
 ```mermaid
@@ -176,7 +177,10 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
   - `yaw_rate` > 0 = turn right;
   - `heave` > 0 = ascend;
   - `surge` > 0 = forward, < 0 = back off.
-- `events` carries `start_recording`, `stop_recording` and `state:<NAME>`.
+- `state` is one of SEARCH, ACQUIRE, TRACK, FILM, LOST and RELEASE (moving on after an animal's time budget, §12).
+- `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame.
+- `encounter` (`id`, `engaged_s`, `remaining_s`) is the animal being filmed. `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
+- At the end of each encounter, a `kind: "encounter"` message summarises it (§12).
 
 **Safety stays with the autopilot.** Depth and altitude limits, obstacle avoidance, leak and
 battery failsafes all belong there. Vision only sends requests, already clipped, slew-limited and
@@ -188,7 +192,8 @@ with a hard stand-off. The bridge should treat a message older than ~0.5 s (by r
 The Pi 5 has **no hardware H.264 encoder**. picamera2's `H264Encoder` is the software libav/x264
 encoder there, and it competes with inference for the four cores. The recording follows the state
 machine: it starts on entering TRACK, continues through FILM and LOST, and stops `postroll_s`
-after returning to SEARCH. Long recordings roll over into a new file every `max_record_s`.
+after leaving them, either back to SEARCH or into RELEASE when the animal's time budget is used up
+(§12). Long recordings roll over into a new file every `max_record_s`.
 
 | setting | effect |
 |---|---|
@@ -198,7 +203,8 @@ after returning to SEARCH. Long recordings roll over into a new file every `max_
 | `recording.bitrate: 6000000` | 6 Mbit/s ≈ 2.7 GB per hour of recording |
 | a separate action camera | no Pi CPU at all; vision still decides where to point the vehicle |
 
-Files are raw H.264 (`recordings/talosaur_YYYYmmdd_HHMMSS.h264`). Wrap one without re-encoding:
+Files are raw H.264 (`recordings/talosaur_YYYYmmdd_HHMMSS_NNN.h264`; `logs/encounters.jsonl` says
+which animal each file shows). Wrap one without re-encoding:
 `ffmpeg -framerate 15 -i talosaur_X.h264 -c copy talosaur_X.mp4`. The encoder writes a keyframe
 every second, so the pre-roll starts at most 1 s later than configured.
 
@@ -267,8 +273,9 @@ python scripts/replay.py --video dive.mp4 --export-dir exports/tiny_ctx --model 
 
 Replay runs the exact onboard pipeline on your desktop or on the Pi. It drops frames to the Pi's
 rate, so the tracker sees what the vehicle would, and writes:
-- an annotated video: heatmap, detected centroid, filtered track, state, command bars, and a red dot while recording;
-- `replay_dive.jsonl` with the per-frame telemetry.
+- an annotated video: heatmap, detected centroid, filtered track, state, the animal being filmed and its time left, the appearance similarity to animals already filmed, command bars, and a red dot while recording;
+- `replay_dive.jsonl` with the per-frame telemetry;
+- `replay_dive.encounters.jsonl` with one line per animal (§12).
 
 Knobs in `pi5.yaml` → `guidance:`:
 
@@ -281,11 +288,68 @@ Knobs in `pi5.yaml` → `guidance:`:
 | `fsm.film_center_deg`, `film_size`, `film_hold_s` | FILM flickers | FILM never reached |
 | `controller.target_size` / `standoff_size` | it stays too far / too close | — |
 | `controller.yaw_kp`, `yaw_kd`, `slew_per_s` | sluggish turning | oscillation around the target |
+| `encounter.same_sim` | different animals are taken for one already filmed | the same animal is filmed again as "new" |
+| `encounter.max_s` | too little footage per animal | it lingers on one animal |
 
 Keep the vehicle's own turn rate in mind. Replay is open loop: the recorded camera does not turn
 toward the target, so a target crossing the frame never looks centred for long.
 
-## 12. Optional: ncnn int8
+## 12. One animal at a time: time budget, moving on, not filming the same fish twice
+
+Each animal gets a time budget. When it is used up, the sub stops documenting that animal, moves
+away, and looks for a *different* one. Settings are under `guidance.encounter` in `pi5.yaml`.
+
+1. **Encounter.** Locking onto an animal (ACQUIRE → TRACK) starts an encounter: a new id and a
+   recording.
+2. **Budget** (`max_s`, default 60 s). Time in TRACK, FILM and LOST counts. When it is used up, the
+   state machine enters **RELEASE**:
+   - the recording stops after its post-roll;
+   - the sub backs off (`controller.release_backoff_s`);
+   - it turns away from the side the animal was on (`release_turn_s`);
+   - it swims on for the rest of `fsm.release_s` (default 12 s);
+   - detections are ignored meanwhile; then SEARCH resumes.
+3. **Recognising animals already filmed, by appearance rather than position.** Underwater position
+   is unreliable, so it isn't used. The model exports its per-patch features (`patch_tokens`).
+   The sub averages them over the animal's heatmap blob, subtracts the average background (water)
+   features, and compares the result with each remembered animal by cosine similarity:
+   - **Budget already spent** (similarity ≥ `same_sim`): the animal is ignored for `cooldown_s`
+     (default 5 min), even while it stays in view. If another animal is in view at the same time,
+     that one is chosen instead.
+   - **Only lost** (it swam out of view before its budget ran out): it is **resumed** with the time
+     it has left. A fish that keeps coming and going is still filmed for at most `max_s` in total.
+4. **Encounter log.** Every encounter is written to `logs/encounters.jsonl`, and also sent as a
+   `kind: "encounter"` message on the backends. Each line records:
+   - the animal's id;
+   - why it ended (`budget`, `lost`, or `shutdown`);
+   - total time on that animal;
+   - time well framed (FILM);
+   - the best-framed moment (`best_t`);
+   - the video files.
+
+   ```json
+   {"kind": "encounter", "id": 3, "reason": "budget", "engaged_s": 60.1, "film_s": 22.4,
+    "resumed": true, "best_t": 431.7, "recordings": ["recordings/talosaur_20261003_101512_004.h264"]}
+   ```
+
+**Limits and calibration.**
+- **Look-alikes.** Appearance separates animals that *look* different. Two fish of the same species
+  and size (a school) look the same, so after one budget the sub leaves the whole school alone for
+  `cooldown_s`.
+- **Threshold.** `same_sim: 0.8` is a starting guess; the right value depends on the trained model.
+  To set it:
+  1. Run replay on footage where the same animal comes back, and on footage where a different one
+     appears. Replay logs every similarity (`reid.sim`, and `sim=` on the overlay).
+  2. Set `same_sim` between the two groups of values.
+
+  On the toy model, a returning fish scores ~1.0 and a differently coloured fish 0.67.
+- **Manoeuvre.** The move-on manoeuvre is timed (seconds of turning, not degrees) until the vehicle's
+  turn rate is calibrated.
+- **Older exports.** Exports made before this change have no patch tokens. The sub still moves on
+  after each budget but cannot recognise animals, and the app warns at start. Re-export with
+  `scripts/export.py`. The parity report's `token cos` column shows that int8 keeps these features.
+- **No limit.** `max_s: 0` disables the budget: follow indefinitely, as before.
+
+## 13. Optional: ncnn int8
 
 This path is **untested here**; ORT int8 and ncnn fp16 are the tested ones. You need ncnn's
 `ncnn2table` and `ncnn2int8` tools, from a release matching your `ncnn` pip version or built from
@@ -307,7 +371,7 @@ Then add `"ncnn_int8_param": "ncnn/vit_tiny_112x208_int8.ncnn.param"` and
 `manifest.json`, and benchmark `--runtimes ncnn_int8`. Before deploying it, check its accuracy
 with replay on labelled clips, or with `scripts/eval.py`.
 
-## 13. Not yet verified on hardware
+## 14. Not yet verified on hardware
 
 1. **All Pi numbers**: fps, memory, thermals, and the CPU cost of recording while running inference.
 2. **picamera2 behaviour.** Checked only against the 0.3.37 API with a fake camera:
@@ -315,12 +379,13 @@ with replay on labelled clips, or with `scripts/eval.py`.
    - `CircularOutput` pre-roll with the libav encoder;
    - `iperiod` / `framerate` on the encoder;
    - the HDR modes.
-3. The ncnn int8 conversion (§12).
+3. The ncnn int8 conversion (§13).
 4. The in-water calibration workflow and the flat-port focus rule of thumb.
 5. Camera controls in the dark: gain limits and noise at depth.
+6. **Recognising animals with the trained model** (§12). Tested only with synthetic features and the toy model's colours. How well JEPA patch tokens separate real animals, and the right `same_sim`, must come from your footage.
 
-## 14. What to send back
+## 15. What to send back
 
 - `reports/pi5/bench_idle.md`, `bench_rec.md` and `bench_sustained.md`, plus their `.json` files.
 - `free -m` output with the app idle in SEARCH, and while recording.
-- One short pool clip with the toy or trained model, plus its `logs/guidance.jsonl`. Replay it on the desktop to tune.
+- One short pool clip with the toy or trained model, plus its `logs/guidance.jsonl` and `logs/encounters.jsonl`. Replay it on the desktop to tune.

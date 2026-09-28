@@ -16,8 +16,9 @@ def test_talosaur_net_shapes_and_heads_from_probes():
 
     enc = build_vit("vit_tiny", depth=2)
     net = TalosaurNet(enc, FrameHead(192, 2), HeatmapHead(192), (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (112, 208))
-    f, h, e = net(torch.rand(3, 3, 112, 208))
+    f, h, e, tok = net(torch.rand(3, 3, 112, 208))
     assert f.shape == (3, 2) and h.shape == (3, 7, 13) and e.shape == (3, 192)
+    assert tok.shape == (3, 91, 192) and torch.allclose(tok.mean(dim=1), e)
     fl, pl = torch.nn.Linear(384, 1), torch.nn.Linear(192, 1)
     fh, hh = heads_from_probes(192, fl, pl)
     assert torch.equal(fh.linear.weight, fl.weight) and torch.equal(hh.linear.bias, pl.bias)

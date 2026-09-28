@@ -184,11 +184,25 @@ class VideoFileSource:
 
 
 class SyntheticSource:
-    """A drifting 'fish' over a gradient with noise; deterministic and dependency-free."""
+    """A drifting 'fish' over a gradient with noise; deterministic and dependency-free.
 
-    def __init__(self, size: tuple[int, int], n_frames: int = 300, fps: float = 10.0, seed: int = 0):
+    The fish is visible for ``visible`` frames, then gone for ``hidden`` frames, and so on; each
+    appearance takes the next colour from ``colors`` (so several colours = several animals)."""
+
+    def __init__(
+        self,
+        size: tuple[int, int],
+        n_frames: int = 300,
+        fps: float = 10.0,
+        seed: int = 0,
+        colors=((200, 180, 90),),
+        visible: int = 40,
+        hidden: int = 40,
+    ):
         self.w, self.h = size
         self.n, self.fps = n_frames, fps
+        self.colors = [tuple(c) for c in colors]
+        self.visible, self.hidden = visible, hidden
         self.rng = np.random.default_rng(seed)
         self.i = 0
         yy = np.linspace(0.9, 0.4, self.h, dtype=np.float32)[:, None, None]
@@ -200,13 +214,13 @@ class SyntheticSource:
         k = self.i
         self.i += 1
         img = self.bg.copy()
-        present = (k // 40) % 2 == 0  # alternate present / absent every 40 frames
-        if present:
-            cx = self.w * (0.2 + 0.6 * ((k % 40) / 40.0))
+        cycle, phase = divmod(k, self.visible + self.hidden)
+        if phase < self.visible:
+            cx = self.w * (0.2 + 0.6 * (phase / self.visible))
             cy = self.h * (0.5 + 0.1 * np.sin(k / 7.0))
             yy, xx = np.mgrid[0 : self.h, 0 : self.w]
             m = ((xx - cx) / (self.w * 0.08)) ** 2 + ((yy - cy) / (self.h * 0.07)) ** 2 <= 1
-            img[m] = (200, 180, 90)
+            img[m] = self.colors[cycle % len(self.colors)]
         img += self.rng.normal(0, 3, img.shape).astype(np.float32)
         return Frame(k / self.fps, np.clip(img, 0, 255).astype(np.uint8), k)
 

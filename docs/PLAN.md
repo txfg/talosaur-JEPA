@@ -319,7 +319,12 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
    - surge from apparent size toward a stand-off target (default: the animal fills 20–25% of frame width);
    - rate limits and a hard minimum stand-off.
 6. State machine: **SEARCH → ACQUIRE** (N of M frames above threshold) **→ TRACK → FILM → LOST** (hold/turn toward last bearing for T s) **→ SEARCH**. Vehicle-level safety stays with the autopilot.
-7. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11).
+7. **One animal at a time** (added after M6 review).
+   - Each animal gets a time budget. Then **RELEASE**: stop recording, back off, turn away, swim on, and search for a different animal.
+   - Animals already filmed are recognised by **appearance, not position**: the model's patch tokens pooled over the animal's blob, centred on the background, compared by cosine similarity.
+   - A recognised animal is ignored for a cooldown. One that was only lost resumes its remaining budget.
+   - Every encounter is logged with its video files (`docs/PI5.md` §12).
+8. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11).
 
 **Recording.** The state machine decides when the main stream is saved: from entering TRACK until a post-roll after returning to SEARCH. A pre-roll ring buffer keeps the approach, but it means the software encoder runs all the time. `preroll_s: 0` encodes only while recording, trading the approach footage for CPU (`docs/PI5.md` §6). The low-res stream always feeds the model. The benchmark measures model fps *while recording*, which tells us the real sustainable rate.
 

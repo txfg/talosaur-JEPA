@@ -4,6 +4,8 @@
   * ``frame_logit``   (B, K)    - "animal present" (+ optional extra outputs such as "interesting")
   * ``heatmap_logit`` (B, h, w) - per-patch animal-likeness for steering
   * ``embedding``     (B, D)    - mean-pooled features (for onboard novelty detection)
+  * ``patch_tokens``  (B, N, D) - final patch features, row-major over the h x w grid (pooled over
+    the target's patches onboard to recognise an animal that was already filmed)
 Normalisation happens inside the graph, so the Pi only scales uint8 to [0, 1].
 """
 
@@ -54,7 +56,12 @@ class TalosaurNet(nn.Module):
     def forward(self, x: torch.Tensor):
         x = (x - self.mean) / self.std
         tokens = self.encoder(x)
-        return self.frame_head(tokens), self.heatmap_head(tokens, self.grid_hw), tokens.mean(dim=1)
+        return (
+            self.frame_head(tokens),
+            self.heatmap_head(tokens, self.grid_hw),
+            tokens.mean(dim=1),
+            tokens,
+        )
 
 
 def heads_from_probes(

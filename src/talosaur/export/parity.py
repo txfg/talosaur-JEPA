@@ -69,15 +69,29 @@ def run_parity(
     sizes_mb: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """``runners``: name -> callable mapping one (3, H, W) image to (frame_logit, heatmap_logit,
-    embedding) - the same runner classes the Pi uses (talosaur.onboard.runtime)."""
+    embedding) - the same runner classes the Pi uses (talosaur.onboard.runtime). Runners with a
+    ``run`` method that also returns patch tokens get a token-similarity check too (the onboard
+    "already filmed" memory compares these)."""
     with torch.no_grad():
         ref = [t.numpy() for t in net(torch.from_numpy(x))]
     res: dict[str, Any] = {"n_images": int(len(x)), "torch_fp32": _metrics(ref[0], ref[1], lab, pos_thr)}
     for name, run in runners.items():
         outs = [[], [], []]
+        tok_cos = []
         t0 = time.perf_counter()
         for i in range(len(x)):
-            o = run(x[i])
+            if hasattr(run, "run"):
+                full = run.run(x[i])
+                o = (full.frame, full.heat, full.emb)
+                if full.tokens is not None and len(ref) > 3:
+                    a, b = full.tokens.reshape(ref[3].shape[1:]), ref[3][i]
+                    tok_cos.append(
+                        np.mean(
+                            np.sum(a * b, 1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-9)
+                        )
+                    )
+            else:
+                o = run(x[i])
             for k in range(3):
                 outs[k].append(np.asarray(o[k]).reshape(ref[k].shape[1:]))
         dt = (time.perf_counter() - t0) / max(1, len(x))
@@ -102,6 +116,8 @@ def run_parity(
                 "file_mb": (sizes_mb or {}).get(name, float("nan")),
             }
         )
+        if tok_cos:
+            m["patch_token_cosine_vs_torch"] = float(np.mean(tok_cos))
         for k in ("frame_auroc", "patch_auroc", "centroid_err_deg_median"):
             if k in m and k in res["torch_fp32"]:
                 m[f"delta_{k}"] = m[k] - res["torch_fp32"][k]
@@ -111,8 +127,8 @@ def run_parity(
 
 def parity_markdown(res: dict[str, Any], tolerances: dict[str, float]) -> str:
     rows = [
-        "| model | frame AUROC | patch AUROC | centroid err ° | heatmap corr | Δ frame AUROC | Δ centroid ° | size MB | ms (this machine) | ok |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| model | frame AUROC | patch AUROC | centroid err ° | heatmap corr | token cos | Δ frame AUROC | Δ centroid ° | size MB | ms (this machine) | ok |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
 
     def f(v):
@@ -130,6 +146,7 @@ def parity_markdown(res: dict[str, Any], tolerances: dict[str, float]) -> str:
             ok = "NO" if bad else "yes"
         rows.append(
             f"| {name} | {f(m.get('frame_auroc'))} | {f(m.get('patch_auroc'))} | {f(m.get('centroid_err_deg_median'))} | {f(m.get('heatmap_corr_vs_torch'))} | "
+            f"{f(m.get('patch_token_cosine_vs_torch'))} | "
             f"{f(m.get('delta_frame_auroc'))} | {f(m.get('delta_centroid_err_deg_median'))} | {f(m.get('file_mb'))} | {f(m.get('latency_ms_this_machine'))} | {ok} |"
         )
     return "\n".join(rows)

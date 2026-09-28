@@ -35,6 +35,10 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     standoff_size: 0.40             # back off above this
     max_surge: 0.4
     max_yaw: 0.8
+    release_backoff_s: 1.5          # moving on from an animal: back off this long ...
+    release_turn_s: 4.0             # ... then turn away from it this long ...
+    release_yaw: 0.6
+    release_surge: 0.3              # ... then swim on for the rest of fsm.release_s
   fsm:
     frame_on: 0.6
     heat_on: 0.6
@@ -42,9 +46,16 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     acquire_m: 5
     lost_timeout_s: 4.0
     postroll_s: 3.0
+    release_s: 12.0                 # length of the move-on manoeuvre (detections are ignored meanwhile)
+  encounter:                        # one animal at a time, then find a different one (docs/PI5.md section 12)
+    max_s: 60                       # film each animal for at most this long in total; 0 = no limit
+    cooldown_s: 300                 # remember filmed animals this long (a recognised one is ignored)
+    same_sim: 0.8                   # appearance similarity counted as "same animal"; calibrate with replay
+    reid: true                      # recognise animals by appearance (needs an export with patch tokens)
 
 backends:
   - {kind: jsonl, path: logs/guidance.jsonl}
   - {kind: udp, host: 127.0.0.1, port: 14600}   # JSON commands for the autopilot bridge
 
+encounter_log: logs/encounters.jsonl  # one line per animal: id, time spent, why it ended, video files
 stats_every_s: 10

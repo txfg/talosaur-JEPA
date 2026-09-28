@@ -32,6 +32,13 @@ class ControllerConfig:
     search_yaw: float = 0.15  # slow scan while searching
     search_period_s: float = 20.0
     lost_yaw: float = 0.3
+    # RELEASE (move on after an animal's time budget): back off, turn away, swim on. Time-based
+    # until a vehicle calibration turns these into angles and distances.
+    release_backoff_s: float = 1.5
+    release_reverse: float = 0.2
+    release_turn_s: float = 4.0
+    release_yaw: float = 0.6
+    release_surge: float = 0.3
 
 
 @dataclass
@@ -99,3 +106,15 @@ class Controller:
 
     def hold(self, t: float) -> Command:
         return self._slew(Command(), t)
+
+    def release(self, t: float, elapsed: float, away: float) -> Command:
+        """Move on from an animal: back off, turn toward ``away`` (+1 right / -1 left, i.e. away
+        from the side the animal was on), then swim on (the rest of the RELEASE state)."""
+        c = self.cfg
+        if elapsed < c.release_backoff_s:
+            cmd = Command(0.0, 0.0, -c.release_reverse)
+        elif elapsed < c.release_backoff_s + c.release_turn_s:
+            cmd = Command(math.copysign(c.release_yaw, away), 0.0, 0.0)
+        else:
+            cmd = Command(0.0, 0.0, c.release_surge)
+        return self._slew(cmd, t)

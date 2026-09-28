@@ -1,7 +1,9 @@
 """Model runners for the Raspberry Pi 5 (numpy + onnxruntime or ncnn; never torch).
 
-Every runner maps one RGB image (3, H, W) float32 in [0, 1] to
-``(frame_logit (K,), heatmap_logit (h, w), embedding (D,))``.
+Every runner maps one RGB image (3, H, W) float32 in [0, 1] to the model outputs:
+``runner.run(x)`` returns a :class:`ModelOutput` (frame logit, heatmap logit, embedding and - for
+exports that have them - the patch tokens used to recognise animals already filmed);
+``runner(x)`` returns just ``(frame_logit (K,), heatmap_logit (h, w), embedding (D,))``.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+OUTPUTS = ("frame_logit", "heatmap_logit", "embedding", "patch_tokens")
+
 
 @dataclass
 class ModelSpec:
@@ -19,6 +23,7 @@ class ModelSpec:
     grid: tuple[int, int]
     frame_outputs: list[str]
     backbone: str = ""
+    tokens: bool = False  # the export has a patch_tokens output
 
     @classmethod
     def from_manifest(cls, entry: dict) -> ModelSpec:
@@ -28,10 +33,35 @@ class ModelSpec:
             tuple(entry["grid"]),
             list(entry["outputs"]["frame_logit"]["meaning"]),
             entry.get("backbone", ""),
+            "patch_tokens" in entry["outputs"],
         )
 
 
-class OrtRunner:
+@dataclass
+class ModelOutput:
+    frame: np.ndarray  # (K,) logits
+    heat: np.ndarray  # (h, w) logits
+    emb: np.ndarray  # (D,)
+    tokens: np.ndarray | None = None  # (h, w, D); None for exports without patch tokens
+
+
+class _Runner:
+    spec: ModelSpec
+
+    def run(self, x: np.ndarray) -> ModelOutput:
+        raise NotImplementedError
+
+    def __call__(self, x: np.ndarray):
+        o = self.run(x)
+        return o.frame, o.heat, o.emb
+
+    def _pack(self, outs: list[np.ndarray]) -> ModelOutput:
+        gh, gw = self.spec.grid
+        tok = outs[3].reshape(gh, gw, -1) if len(outs) > 3 else None
+        return ModelOutput(outs[0].reshape(-1), outs[1].reshape(gh, gw), outs[2].reshape(-1), tok)
+
+
+class OrtRunner(_Runner):
     def __init__(self, onnx_path: str | Path, spec: ModelSpec, threads: int = 4):
         import onnxruntime as ort
 
@@ -43,15 +73,17 @@ class OrtRunner:
         so.enable_mem_pattern = True
         self.sess = ort.InferenceSession(str(onnx_path), so, providers=["CPUExecutionProvider"])
         self.input_name = self.sess.get_inputs()[0].name
-        self.output_names = [o.name for o in self.sess.get_outputs()]
+        names = [o.name for o in self.sess.get_outputs()]
+        # fetch by name when the graph uses the export's names, else by position
+        self.output_names = [n for n in OUTPUTS if n in names] if set(OUTPUTS[:3]) <= set(names) else names
         self.spec = spec
 
-    def __call__(self, x: np.ndarray):
-        f, h, e = self.sess.run(self.output_names, {self.input_name: x[None].astype(np.float32, copy=False)})
-        return f[0], h[0], e[0]
+    def run(self, x: np.ndarray) -> ModelOutput:
+        outs = self.sess.run(self.output_names, {self.input_name: x[None].astype(np.float32, copy=False)})
+        return self._pack([o[0] for o in outs])
 
 
-class NcnnRunner:
+class NcnnRunner(_Runner):
     def __init__(
         self, param: str | Path, binf: str | Path, spec: ModelSpec, threads: int = 4, fp16: bool = True
     ):
@@ -66,21 +98,21 @@ class NcnnRunner:
         self.net.load_param(str(param))
         self.net.load_model(str(binf))
         self.spec = spec
+        self.blobs = ["out0", "out1", "out2"] + (["out3"] if spec.tokens else [])
 
-    def __call__(self, x: np.ndarray):
+    def run(self, x: np.ndarray) -> ModelOutput:
         arr = np.ascontiguousarray(x, dtype=np.float32)  # must outlive the extractor (no copy in ncnn.Mat)
         mat = self.ncnn.Mat(arr)
         ex = self.net.create_extractor()
         ex.input("in0", mat)
         outs = []
-        for name in ("out0", "out1", "out2"):
+        for name in self.blobs:
             ret, m = ex.extract(name)
             if ret != 0:
                 raise RuntimeError(f"ncnn extract {name} failed ({ret})")
             outs.append(np.array(m, copy=True))
         del mat, arr
-        f, h, e = outs
-        return f.reshape(-1), h.reshape(self.spec.grid), e.reshape(-1)
+        return self._pack(outs)
 
 
 def load_runner(export_dir: str | Path, model: str, runtime: str = "ort_int8", threads: int = 4):

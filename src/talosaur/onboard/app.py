@@ -6,12 +6,15 @@
       --runtime ort_fp32          # camera/recording/UDP check with the toy colour model (talosaur.onboard.toy_model)
 
 Never imports torch. Telemetry (state, target, track, command, latency) goes to the configured
-backends (JSONL log and/or JSON over UDP); recording follows the state machine.
+backends (JSONL log and/or JSON over UDP); recording follows the state machine. Each animal is
+filmed for at most ``guidance.encounter.max_s``; every encounter (animal, duration, reason it
+ended, video files) is appended to ``encounter_log`` (default logs/encounters.jsonl).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import threading
 import time
@@ -50,7 +53,14 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
     elif src_kind == "video":
         source = VideoFileSource(video or sc["video"], size=(W, H), max_fps=sc.get("max_fps"))
     elif src_kind == "synthetic":
-        source = SyntheticSource((W, H), int(sc.get("n_frames", 300)), float(sc.get("fps", 10)))
+        source = SyntheticSource(
+            (W, H),
+            int(sc.get("n_frames", 300)),
+            float(sc.get("fps", 10)),
+            colors=sc.get("colors", [(200, 180, 90)]),
+            visible=int(sc.get("visible", 40)),
+            hidden=int(sc.get("hidden", 40)),
+        )
     else:
         raise ValueError(f"unknown source {src_kind!r}")
     rc = cfg.get("recording", {})
@@ -93,24 +103,54 @@ def run(
     stats_every = float(cfg.get("stats_every_s", 10.0))
     states: dict[str, int] = {}
     n_recordings = 0
+    encounters: list[dict] = []
+    enc_files: list[str] = []
+    enc_log = cfg.get("encounter_log", "logs/encounters.jsonl")
+    if guidance.cfg.encounter.reid and not runner.spec.tokens:
+        log.warning(
+            "this export has no patch tokens, so animals already filmed cannot be recognised "
+            "(the vehicle still moves on after each time budget); re-export with scripts/export.py"
+        )
+
+    def _encounter_done(summary: dict) -> None:
+        rec = {"kind": "encounter", **summary, "recordings": list(enc_files)}
+        encounters.append(rec)
+        backend.publish(rec)
+        if enc_log:
+            Path(enc_log).parent.mkdir(parents=True, exist_ok=True)
+            with open(enc_log, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        log.info(
+            f"encounter {rec['id']} ended ({rec['reason']}): {rec['engaged_s']} s on this animal, "
+            f"{rec['film_s']} s well framed, files {rec['recordings']}"
+        )
+
+    t_last = 0.0
     try:
         while not stop["flag"]:
             t_loop = time.perf_counter()
             fr = source.read()
             if fr is None:
                 break
+            t_last = fr.t
             t0 = time.perf_counter()
-            f, h, e = runner(preprocess(fr.rgb, (H, W)))
+            out = runner.run(preprocess(fr.rgb, (H, W)))
             t_inf = time.perf_counter() - t0
             if guidance.novelty is None and guidance.cfg.novelty:
-                guidance.novelty = NoveltyDetector(int(np.asarray(e).size))
-            cmd, tele, events = guidance.step(fr.t, f, h, e)
+                guidance.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
+            cmd, tele, events = guidance.step(fr.t, out.frame, out.heat, out.emb, out.tokens)
             for ev in events:
-                if ev == "start_recording":
+                if ev == "encounter_start":
+                    enc_files = []
+                elif ev == "start_recording":
                     recorder.start(fr.t)
                     n_recordings += 1
+                    if recorder.path:
+                        enc_files.append(str(recorder.path))
                 elif ev == "stop_recording":
                     recorder.stop(fr.t)
+            if "encounter_summary" in tele:
+                _encounter_done(tele["encounter_summary"])
             lat.append(t_inf * 1000)
             loop_t.append(time.perf_counter() - t_loop)
             tele["kind"] = "guidance"
@@ -133,6 +173,9 @@ def run(
             if max_frames and n >= max_frames:
                 break
     finally:
+        last = guidance.close(t_last)
+        if last:
+            _encounter_done(last)
         recorder.close()
         source.close()
         backend.close()
@@ -142,6 +185,9 @@ def run(
         "frames": n,
         "states": states,
         "recordings": n_recordings,
+        "encounters": [
+            {k: e[k] for k in ("id", "reason", "engaged_s", "film_s", "resumed")} for e in encounters
+        ],
         "infer_ms_p50": float(np.percentile(lat, 50)) if lat else float("nan"),
         "loop_fps": len(loop_t) / max(1e-6, sum(loop_t)) if loop_t else float("nan"),
         "peak_rss_mb": sysinfo.peak_rss_mb(),

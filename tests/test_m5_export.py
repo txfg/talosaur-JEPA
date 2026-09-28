@@ -50,14 +50,22 @@ def test_quantize_static_and_dynamic(tmp_path):
     ops = {n.op_type for n in onnx.load(str(s8)).graph.node}
     assert "QuantizeLinear" in ops and "DequantizeLinear" in ops
     assert "LayerNormalization" in ops  # stays in float
-    spec = ModelSpec((48, 96), (3, 6), ["animal"])
+    spec = ModelSpec((48, 96), (3, 6), ["animal"], tokens=True)
     x = calib[0]
     with torch.no_grad():
-        ref = net(torch.from_numpy(x[None]))[1].numpy()[0]
+        outs = net(torch.from_numpy(x[None]))
+        ref, ref_tok = outs[1].numpy()[0], outs[3].numpy()[0]
     for path in (s8, d8):
-        f, h, e = OrtRunner(path, spec, threads=1)(x)
+        r = OrtRunner(path, spec, threads=1)
+        f, h, e = r(x)
         assert f.shape == (1,) and h.shape == (3, 6) and e.shape == (192,)
         assert np.corrcoef(h.ravel(), ref.ravel())[0, 1] > 0.9
+        tok = r.run(x).tokens
+        assert tok.shape == (3, 6, 192)
+        cos = np.sum(tok.reshape(18, -1) * ref_tok, 1) / (
+            np.linalg.norm(tok.reshape(18, -1), axis=1) * np.linalg.norm(ref_tok, axis=1)
+        )
+        assert cos.mean() > 0.95  # appearance memory still works after int8
 
 
 def test_ncnn_conversion_with_fused_attention(tmp_path):
@@ -72,8 +80,10 @@ def test_ncnn_conversion_with_fused_attention(tmp_path):
     x = np.random.default_rng(1).random((3, 48, 96), dtype=np.float32)
     with torch.no_grad():
         ref = [t.numpy()[0] for t in net(torch.from_numpy(x[None]))]
-    out = NcnnRunner(param, binf, ModelSpec((48, 96), (3, 6), ["animal"]), threads=1, fp16=False)(x)
-    for a, b in zip(out, ref):
+    spec = ModelSpec((48, 96), (3, 6), ["animal"], tokens=True)
+    o = NcnnRunner(param, binf, spec, threads=1, fp16=False).run(x)
+    assert len(ref) == 4 and o.tokens.shape == (3, 6, 192)
+    for a, b in zip((o.frame, o.heat, o.emb, o.tokens), ref):
         assert np.abs(a.reshape(b.shape) - b).max() / (np.abs(b).max() + 1e-9) < 5e-3
 
 
@@ -139,6 +149,8 @@ def test_export_script_end_to_end(synthetic_index, tmp_path):
     man = json.loads((out / "manifest.json").read_text())
     entry = man["models"]["vit_tiny_48x96"]
     assert entry["grid"] == [3, 6] and entry["input"]["shape"] == [1, 3, 48, 96]
+    assert entry["outputs"]["patch_tokens"]["shape"] == [1, 18, 192]
+    assert "token cos" in (out / "parity.md").read_text()
     for k in ("onnx_fp32", "onnx_int8", "onnx_dyn8", "ncnn_param", "ncnn_bin"):
         assert (out / entry["files"][k]).exists()
     assert "ort_int8" in (out / "parity.md").read_text()

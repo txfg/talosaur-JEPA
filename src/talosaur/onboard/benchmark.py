@@ -96,7 +96,7 @@ def _single(spec: dict) -> dict:
 
 def _time_full_loop(runner, iters: int) -> float | None:
     """Median ms of the whole per-frame path the app runs: lores YUV420 -> RGB, preprocess, model,
-    guidance (target, tracker, state machine, controller, novelty)."""
+    guidance (targets, appearance memory, tracker, state machine, controller, novelty)."""
     if iters <= 0:
         return None
     from talosaur.guidance.novelty import NoveltyDetector
@@ -112,10 +112,10 @@ def _time_full_loop(runner, iters: int) -> float | None:
     ms = []
     for i in range(iters + 3):
         t = time.perf_counter()
-        f, h, e = runner(preprocess(yuv420_to_rgb(yuv, W, H), (H, W)))
+        out = runner.run(preprocess(yuv420_to_rgb(yuv, W, H), (H, W)))
         if guid.novelty is None:
-            guid.novelty = NoveltyDetector(int(np.asarray(e).size))
-        guid.step(i * 0.1, f, h, e)
+            guid.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
+        guid.step(i * 0.1, out.frame, out.heat, out.emb, out.tokens)
         if i >= 3:
             ms.append((time.perf_counter() - t) * 1000)
     return float(np.median(ms))

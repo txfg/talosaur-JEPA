@@ -161,6 +161,10 @@ def test_toy_model_outputs_and_detects_warm_object(toy_export):
     f, h, _ = r(preprocess(fish, (112, 208)))
     assert f[0] > 0 and np.unravel_index(h.argmax(), h.shape)[0] == 3
     assert set(np.argwhere(h > 0)[:, 1]) == {10, 11}
+    out = r.run(preprocess(fish, (112, 208)))
+    assert r.spec.tokens and out.tokens.shape == (7, 13, 3)  # toy "tokens" = mean RGB per patch
+    assert np.allclose(out.tokens[3, 10], np.array([230, 150, 40]) / 255, atol=1e-5)
+    assert np.allclose(out.tokens[0, 0], np.array([0, 60, 90]) / 255, atol=1e-5)
 
 
 # ----------------------------------------------------------------------------- app
@@ -173,6 +177,7 @@ def _app_cfg(export_dir, tmp_path, n_frames=120):
     cfg["model"].update(export_dir=str(export_dir), name="toy_112x208", runtime="ort_fp32", threads=1)
     cfg["source"] = {"kind": "synthetic", "n_frames": n_frames, "fps": 10}
     cfg["backends"] = [{"kind": "jsonl", "path": str(tmp_path / "tele.jsonl")}]
+    cfg["encounter_log"] = str(tmp_path / "encounters.jsonl")
     cfg["stats_every_s"] = 0.0  # also exercise the periodic stats message
     return cfg
 
@@ -193,6 +198,32 @@ def test_app_runs_the_full_loop_on_synthetic_frames(toy_export, tmp_path):
     for r in guid:
         assert all(abs(v) <= 1.0 for v in r["cmd"].values())
     assert any("start_recording" in r["events"] for r in guid)
+    # the run ends mid-encounter: it is still logged, as "shutdown"
+    (enc,) = [json.loads(line) for line in (tmp_path / "encounters.jsonl").read_text().splitlines()]
+    assert enc["kind"] == "encounter" and enc["reason"] == "shutdown" and enc["appearance"]
+
+
+@requires_toy
+def test_app_films_each_animal_for_its_budget_then_finds_a_different_one(toy_export, tmp_path):
+    """Fish A (yellow) and fish B (magenta) take turns in view: A, gap, B, gap, A again. Each is
+    filmed for its 2 s budget; A's second visit is recognised and ignored."""
+    from talosaur.onboard.app import run
+
+    cfg = _app_cfg(toy_export, tmp_path, n_frames=200)
+    cfg["source"].update(colors=[(200, 180, 90), (230, 30, 250)], visible=40, hidden=40)
+    g = cfg["guidance"]
+    g["encounter"].update(max_s=2.0, cooldown_s=60.0)
+    g["fsm"]["release_s"] = 1.0
+    summary = run(cfg)
+    encs = [json.loads(line) for line in (tmp_path / "encounters.jsonl").read_text().splitlines()]
+    assert [(e["id"], e["reason"]) for e in encs] == [(1, "budget"), (2, "budget")]
+    assert all(e["engaged_s"] == pytest.approx(2.0, abs=0.15) for e in encs)
+    assert [e["id"] for e in summary["encounters"]] == [1, 2]
+    rows = [json.loads(line) for line in (tmp_path / "tele.jsonl").read_text().splitlines()]
+    guid = [r for r in rows if r["kind"] == "guidance"]
+    second_a = [r for r in guid if r["frame"] >= 165]  # A is back, in plain view ...
+    assert second_a and all(r["state"] == "SEARCH" for r in second_a)  # ... and left alone
+    assert any(r["reid"]["skipped"] for r in second_a)
 
 
 @requires_toy
@@ -341,8 +372,19 @@ def test_picamera2_recorder_without_preroll(fake_picamera2, tmp_path):
     assert cam.calls[-1] == "stop_encoder"
     n = NullRecorder()
     n.start(0.0)
-    assert n.recording
+    assert n.recording and n.path is None
     n.close()
+
+
+def test_recording_rollover_never_overwrites(fake_picamera2, tmp_path):
+    Picamera2Source((208, 112))
+    rec = Picamera2Recorder(fake_picamera2["cam"], tmp_path / "rec", preroll_s=5, fps=15)
+    paths = []
+    for _ in range(3):  # stop + start within the same second, like a max_record_s roll-over
+        rec.start(0.0)
+        paths.append(rec.path)
+        rec.stop(0.0)
+    assert len(set(paths)) == 3 and all(p.name.endswith(f"_{i + 1:03d}.h264") for i, p in enumerate(paths))
 
 
 # ----------------------------------------------------------------------------- benchmark and replay
@@ -423,6 +465,8 @@ def test_replay_writes_annotated_video_and_telemetry(toy_export, tmp_path, monke
     assert ex.value.code == 0
     tele = [json.loads(line) for line in out.with_suffix(".jsonl").read_text().splitlines()]
     assert len(tele) == 40 and {"SEARCH", "TRACK"} <= {t["state"] for t in tele}
+    encs = [json.loads(line) for line in out.with_suffix(".encounters.jsonl").read_text().splitlines()]
+    assert [(e["id"], e["reason"]) for e in encs] == [(1, "shutdown")]  # still filming when the clip ends
     import av
 
     with av.open(str(out)) as c:

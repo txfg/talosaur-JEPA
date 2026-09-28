@@ -1,8 +1,9 @@
 """Build the fused onboard network (encoder + heads) and export it to ONNX at fixed input sizes.
 
 The exported graph takes ``image``: float32 (1, 3, H, W), RGB in [0, 1] (normalisation is inside
-the graph) and returns ``frame_logit`` (1, K), ``heatmap_logit`` (1, h, w), ``embedding`` (1, D).
-A ``manifest.json`` next to the models tells the Pi runtime how to feed and read them.
+the graph) and returns ``frame_logit`` (1, K), ``heatmap_logit`` (1, h, w), ``embedding`` (1, D)
+and ``patch_tokens`` (1, h*w, D). A ``manifest.json`` next to the models tells the Pi runtime how
+to feed and read them.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from talosaur.utils.log import get_logger
 log = get_logger("export")
 
 INPUT_NAME = "image"
-OUTPUT_NAMES = ["frame_logit", "heatmap_logit", "embedding"]
+OUTPUT_NAMES = ["frame_logit", "heatmap_logit", "embedding", "patch_tokens"]
 
 
 def load_encoder(encoder_ckpt: str | Path, which: str = "target"):
@@ -129,6 +130,10 @@ def manifest_entry(net: TalosaurNet, files: dict[str, str], backbone: str, frame
             "embedding": {
                 "shape": [1, net.encoder.embed_dim],
                 "meaning": "mean-pooled features (novelty detection)",
+            },
+            "patch_tokens": {
+                "shape": [1, net.grid_hw[0] * net.grid_hw[1], net.encoder.embed_dim],
+                "meaning": "final patch features, row-major over the grid (recognising animals already filmed)",
             },
         },
         "grid": list(net.grid_hw),

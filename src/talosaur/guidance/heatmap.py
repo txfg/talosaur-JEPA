@@ -5,7 +5,7 @@ Pure numpy; grids are tiny (e.g. 13x7), so a simple union-find labelling is plen
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -20,6 +20,7 @@ class Target:
     peak: float = 0.0  # max probability in the blob
     bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)  # normalised x0, y0, x1, y1
     n_blobs: int = 0
+    mask: np.ndarray | None = field(default=None, repr=False, compare=False)  # the blob's grid cells
 
     def as_dict(self) -> dict:
         return {
@@ -73,18 +74,16 @@ def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
     return labels, len(roots)
 
 
-def find_target(
+def find_blobs(
     prob: np.ndarray,
     thr: float = 0.5,
-    prev_xy: tuple[float, float] | None = None,
-    gate: float = 0.35,
     min_mass: float = 0.6,
     gamma: float = 2.0,
     smooth: bool = False,
     thr_low: float | None = None,
-) -> Target:
-    """Pick the target blob: the one closest to the previous track position (within ``gate``,
-    in normalised image units) if any, else the heaviest.
+) -> tuple[list[Target], float, int]:
+    """All animal blobs in the heatmap (each with its grid ``mask``), the heatmap's peak, and the
+    number of connected regions before the mass / seed checks.
 
     Hysteresis: a blob is the connected region with probability >= ``thr_low`` (default ``thr``)
     and must contain a cell >= ``thr``, so a small, distant animal covering one or two patches is
@@ -96,8 +95,6 @@ def find_target(
     h, w = p.shape
     lo = thr if thr_low is None else min(thr_low, thr)
     labels, n = label_components(p >= lo)
-    if n == 0:
-        return Target(False, peak=float(p.max()), n_blobs=0)
     ys, xs = np.mgrid[0:h, 0:w]
     blobs = []
     for k in range(1, n + 1):
@@ -109,14 +106,37 @@ def find_target(
         cx = float(((xs[m] + 0.5) / w * wgt).sum() / wgt.sum())
         cy = float(((ys[m] + 0.5) / h * wgt).sum() / wgt.sum())
         bbox = (xs[m].min() / w, ys[m].min() / h, (xs[m].max() + 1) / w, (ys[m].max() + 1) / h)
-        blobs.append(
-            Target(True, cx, cy, float(np.sqrt(m.sum() / (h * w))), mass, float(p[m].max()), bbox, n)
-        )
+        size = float(np.sqrt(m.sum() / (h * w)))
+        blobs.append(Target(True, cx, cy, size, mass, float(p[m].max()), bbox, n, m))
+    return blobs, float(p.max()), n
+
+
+def order_blobs(
+    blobs: list[Target], prev_xy: tuple[float, float] | None = None, gate: float = 0.35
+) -> list[Target]:
+    """Preference order: the blob closest to the previous track position (within ``gate``, in
+    normalised image units) first, then the rest by mass."""
+    rest = sorted(blobs, key=lambda b: -b.mass)
+    if prev_xy is None or not blobs:
+        return rest
+    near = min(blobs, key=lambda b: np.hypot(b.cx - prev_xy[0], b.cy - prev_xy[1]))
+    if np.hypot(near.cx - prev_xy[0], near.cy - prev_xy[1]) > gate:
+        return rest
+    return [near] + [b for b in rest if b is not near]
+
+
+def find_target(
+    prob: np.ndarray,
+    thr: float = 0.5,
+    prev_xy: tuple[float, float] | None = None,
+    gate: float = 0.35,
+    min_mass: float = 0.6,
+    gamma: float = 2.0,
+    smooth: bool = False,
+    thr_low: float | None = None,
+) -> Target:
+    """The preferred blob (see :func:`find_blobs` and :func:`order_blobs`), or ``found=False``."""
+    blobs, peak, n = find_blobs(prob, thr, min_mass, gamma, smooth, thr_low)
     if not blobs:
-        return Target(False, peak=float(p.max()), n_blobs=n)
-    if prev_xy is not None:
-        d = [np.hypot(b.cx - prev_xy[0], b.cy - prev_xy[1]) for b in blobs]
-        i = int(np.argmin(d))
-        if d[i] <= gate:
-            return blobs[i]
-    return max(blobs, key=lambda b: b.mass)
+        return Target(False, peak=peak, n_blobs=n)
+    return order_blobs(blobs, prev_xy, gate)[0]

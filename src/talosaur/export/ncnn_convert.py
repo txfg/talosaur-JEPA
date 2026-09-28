@@ -45,9 +45,10 @@ def export_ncnn(net, out_dir: str | Path, name: str, fp16: bool = True) -> tuple
 
 
 def ncnn_infer(
-    param: str | Path, binf: str | Path, x: np.ndarray, threads: int = 4, fp16: bool = True
+    param: str | Path, binf: str | Path, x: np.ndarray, threads: int = 4, fp16: bool = True, n_out: int = 4
 ) -> list[np.ndarray]:
-    """Run one (3, H, W) float32 image; returns [frame_logit, heatmap_logit, embedding]."""
+    """Run one (3, H, W) float32 image; returns [frame_logit, heatmap_logit, embedding,
+    patch_tokens] (``n_out=3`` for models exported before patch tokens were added)."""
     import ncnn
 
     net = ncnn.Net()
@@ -64,7 +65,7 @@ def ncnn_infer(
     mat = ncnn.Mat(arr)
     ex.input("in0", mat)
     outs = []
-    for name in ("out0", "out1", "out2"):
+    for name in [f"out{i}" for i in range(n_out)]:
         ret, m = ex.extract(name)
         if ret != 0:
             raise RuntimeError(f"ncnn extract {name} failed ({ret})")

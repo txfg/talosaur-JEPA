@@ -13,6 +13,7 @@ ONBOARD_MODULES = [
     "talosaur.guidance.backends",
     "talosaur.guidance.camera_model",
     "talosaur.guidance.controller",
+    "talosaur.guidance.encounters",
     "talosaur.guidance.heatmap",
     "talosaur.guidance.novelty",
     "talosaur.guidance.pipeline",
@@ -56,6 +57,7 @@ def test_onboard_loop_and_benchmark_run_without_torch(tmp_path):
             "model": {{"export_dir": {str(export)!r}, "name": "toy_112x208", "runtime": "ort_fp32", "threads": 1}},
             "source": {{"kind": "synthetic", "n_frames": 60, "fps": 10}},
             "backends": [{{"kind": "jsonl", "path": {str(tmp_path / "tele.jsonl")!r}}}],
+            "encounter_log": {str(tmp_path / "encounters.jsonl")!r},
         }}
         summary = run(cfg)
         bench = _single({{"export_dir": {str(export)!r}, "model": "toy_112x208", "runtime": "ort_fp32",

@@ -1,8 +1,9 @@
 """A tiny colour-contrast "model" in the exported-model format, for dry runs and tests.
 
 It is *not* a detector. Per 16x16 patch it scores warm colours against blue-green water
-(``scale * (mean(R - 0.5 B) - offset)``) and pools that into the same three outputs as a real
-export (frame logit, heatmap logit, embedding). Uses:
+(``scale * (mean(R - 0.5 B) - offset)``) and pools that into the same four outputs as a real
+export (frame logit, heatmap logit, embedding, patch tokens = mean RGB per patch, so objects of
+different colours count as different animals). Uses:
 
 * check the Pi's camera -> model -> guidance -> recording -> UDP chain before a trained model
   exists (in the pool, move an orange object in front of the camera and watch the vehicle
@@ -46,6 +47,7 @@ def build_toy_onnx(
         numpy_helper.from_array(w, "w"),
         numpy_helper.from_array(np.array([-scale * offset], np.float32), "b"),
         numpy_helper.from_array(np.array([1, gh, gw], np.int64), "heat_shape"),
+        numpy_helper.from_array(np.array([1, 3, gh * gw], np.int64), "tok_shape"),
     ]
     nodes = [
         helper.make_node(
@@ -55,6 +57,12 @@ def build_toy_onnx(
         helper.make_node("Reshape", ["heat4", "heat_shape"], ["heatmap_logit"]),
         helper.make_node("GlobalAveragePool", ["image"], ["gap"]),
         helper.make_node("Flatten", ["gap"], ["embedding"], axis=1),
+        # "patch tokens": mean RGB of every patch, (1, N, 3) row-major like the real export
+        helper.make_node(
+            "AveragePool", ["image"], ["patch_rgb"], kernel_shape=[patch, patch], strides=[patch, patch]
+        ),
+        helper.make_node("Reshape", ["patch_rgb", "tok_shape"], ["tok_cn"]),
+        helper.make_node("Transpose", ["tok_cn"], ["patch_tokens"], perm=[0, 2, 1]),
     ]
     graph = helper.make_graph(
         nodes,
@@ -64,6 +72,7 @@ def build_toy_onnx(
             helper.make_tensor_value_info("frame_logit", TensorProto.FLOAT, [1, 1]),
             helper.make_tensor_value_info("heatmap_logit", TensorProto.FLOAT, [1, gh, gw]),
             helper.make_tensor_value_info("embedding", TensorProto.FLOAT, [1, 3]),
+            helper.make_tensor_value_info("patch_tokens", TensorProto.FLOAT, [1, gh * gw, 3]),
         ],
         inits,
     )
@@ -96,6 +105,10 @@ def toy_manifest_entry(input_hw: tuple[int, int], files: dict[str, str], patch: 
                 "meaning": "toy: warm-colour contrast per patch",
             },
             "embedding": {"shape": [1, 3], "meaning": "toy: mean RGB"},
+            "patch_tokens": {
+                "shape": [1, (H // patch) * (W // patch), 3],
+                "meaning": "toy: mean RGB per patch",
+            },
         },
         "grid": [H // patch, W // patch],
         "patch": patch,
