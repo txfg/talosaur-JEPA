@@ -258,7 +258,7 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 3. The target becomes a bearing and elevation through a camera model: flat-port refraction, or an in-water calibration including lens distortion.
 4. A Kalman tracker with outlier gating smooths it.
 5. A state machine runs SEARCH → ACQUIRE → TRACK → FILM → LOST, plus RELEASE.
-6. **Search** ([`docs/SEARCH.md`](docs/SEARCH.md)). With depth and heading from the vehicle (`nav:` in the config):
+6. **Search** ([`docs/SEARCH.md`](docs/SEARCH.md); the marine biology and the 200 m field plan behind it: [`docs/TWILIGHT_ZONE.md`](docs/TWILIGHT_ZONE.md)). With depth and heading from the vehicle (`nav:` in the config):
    - it profiles the depth range once, then works the depth bands where animals are detected most, with a time-of-day prior for the dusk and dawn migration;
    - it swims long legs, switches to a tight local search after each find because animals come in patches, and steers away from water already covered.
 

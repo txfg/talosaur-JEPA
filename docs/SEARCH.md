@@ -1,7 +1,8 @@
 # Searching, filming and moving on: behaviour design
 
 How the vehicle decides **where to look**, **how long to film each animal**, **when to use
-light**, and what it records. The design is grounded in the literature on twilight-zone animals,
+light**, and what it records. The marine biology behind it, and the field plan for 200 m, are in
+[docs/TWILIGHT_ZONE.md](TWILIGHT_ZONE.md). The design is grounded in the literature on twilight-zone animals,
 AUV search and foraging theory (§1, cited), and compared in a closed-loop simulator (§7). The
 simulator is a caricature of the ocean; your own dives replace its numbers.
 
