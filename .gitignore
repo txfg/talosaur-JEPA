@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Data, runs and large artifacts (never commit datasets or images)
+data/
+datasets/
+runs/
+outputs/
+multirun/
+exports/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.ncnn.param
+*.ncnn.bin
+*.tar
+*.zip
+*.mp4
+*.mov
+*.h264
+wandb/
+tb/
+
+# Reports are committed, but not their large binary attachments
+reports/**/*.png
+reports/**/*.jpg
+!reports/**/figures/*.png
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

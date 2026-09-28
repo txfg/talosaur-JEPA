@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check .
+
+  test:
+    # Everything except the Pi: CPU torch, data pipeline, training smoke tests, export.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU torch
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install package
+        run: pip install -e ".[data,train,deploy,dev]"
+      - run: pytest -q
+
+  onboard-no-torch:
+    # The Raspberry Pi runtime must work with only numpy + onnxruntime + pyyaml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"   # Raspberry Pi OS (Trixie) ships Python 3.13
+      - run: pip install -e ".[pi,dev]"
+      - name: Onboard tests without torch
+        run: pytest -q tests/test_onboard_no_torch.py

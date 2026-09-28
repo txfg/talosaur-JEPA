@@ -1,0 +1,90 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "talosaur"
+version = "0.1.0"
+description = "JEPA self-supervised vision for the Talosaur AUV: underwater data curation, I-JEPA pretraining, probes, int8 export, and a Raspberry Pi 5 onboard guidance runtime."
+readme = "README.md"
+requires-python = ">=3.10"
+# The core install is deliberately tiny: it is all the Raspberry Pi 5 onboard runtime needs
+# (plus onnxruntime or ncnn, see the `pi` extra). Everything heavy lives in extras.
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+data = [
+    "pillow>=10.0",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "scipy>=1.10",
+    "av>=12.0",
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "matplotlib>=3.7",
+]
+fathomnet = ["fathomnet>=1.10"]
+train = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "tensorboard>=2.14",
+    "timm>=1.0",
+    "psutil>=5.9",
+]
+deploy = [
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "onnxscript>=0.1",
+]
+ncnn = [
+    "pnnx",
+    "ncnn",
+]
+# Raspberry Pi 5: `pip install -e .[pi]` inside a venv created with --system-site-packages
+# so the apt-installed python3-picamera2 is visible.
+pi = [
+    "onnxruntime>=1.18",
+]
+wandb = ["wandb>=0.16"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+all = [
+    "talosaur[data,fathomnet,train,deploy,dev]",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["data", "runs", "outputs", "multirun", "exports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length is handled by the formatter's judgement, not the linter
+    "B905",   # zip() without strict= is fine for our internal code
+    "UP007",  # keep Optional[...] readable for py3.10 users
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["talosaur"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: longer CPU tests (a few seconds to a minute)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:tensorboard.*",
+    "ignore::DeprecationWarning:google.*",
+]
