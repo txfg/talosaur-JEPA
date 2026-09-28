@@ -180,7 +180,16 @@ class VisionTransformer(nn.Module):
         for b in self.blocks:
             b.attn.attn_impl = impl
 
+    def freeze_pos_embed(self, h: int, w: int) -> None:
+        """Register the (h, w) position embedding as a buffer: exported graphs then carry it as a
+        constant instead of recomputing it (used for fixed-size ONNX/ncnn export)."""
+        pe = torch.from_numpy(sincos_2d(self.embed_dim, h, w)).unsqueeze(0)
+        self.register_buffer("pos_fixed", pe, persistent=False)
+        self.pos_fixed_hw = (h, w)
+
     def pos_embed(self, h: int, w: int, device, dtype) -> torch.Tensor:
+        if getattr(self, "pos_fixed_hw", None) == (h, w):
+            return self.pos_fixed.to(dtype)
         key = (h, w, device, dtype)
         pe = self._pos_cache.get(key)
         if pe is None:
@@ -209,6 +218,38 @@ class VisionTransformer(nn.Module):
         h, w = self.grid(x.shape[-2], x.shape[-1])
         t = self.forward(x)
         return t.reshape(x.shape[0], h, w, -1), (h, w)
+
+
+class TorchMHA(nn.Module):
+    """The same attention expressed with ``nn.MultiheadAttention`` (identical outputs).
+
+    Used only for ncnn export: PNNX maps ``nn.MultiheadAttention`` directly onto ncnn's fused
+    MultiHeadAttention layer, whereas the explicit qkv reshape/permute pattern crosses the batch
+    dimension, which ncnn cannot represent."""
+
+    def __init__(self, attn: Attention):
+        super().__init__()
+        dim = attn.qkv.in_features
+        self.mha = nn.MultiheadAttention(dim, attn.num_heads, bias=True, batch_first=True)
+        with torch.no_grad():
+            self.mha.in_proj_weight.copy_(attn.qkv.weight)
+            self.mha.in_proj_bias.copy_(attn.qkv.bias if attn.qkv.bias is not None else torch.zeros(3 * dim))
+            self.mha.out_proj.weight.copy_(attn.proj.weight)
+            self.mha.out_proj.bias.copy_(attn.proj.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mha(x, x, x, need_weights=False)[0]
+
+
+def with_torch_mha(module: nn.Module) -> nn.Module:
+    """Deep copy of ``module`` with every ViT ``Attention`` replaced by :class:`TorchMHA`."""
+    import copy
+
+    m = copy.deepcopy(module)
+    for sub in m.modules():
+        if isinstance(sub, Block):
+            sub.attn = TorchMHA(sub.attn)
+    return m.eval()
 
 
 def build_vit(name: str = "vit_tiny", **overrides) -> VisionTransformer:

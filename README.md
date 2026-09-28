@@ -12,7 +12,7 @@ Self-supervised vision for **Talosaur**, a low-cost AUV that finds, follows, and
 | M2 I-JEPA pretraining | done (run it on your GPUs) |
 | M3 probes, heads, and condition slices | done |
 | M4 baselines | done |
-| M5 ONNX export and int8 | planned |
+| M5 ONNX export and int8 | done |
 | M6 Pi 5 benchmark and onboard runtime | planned |
 
 ## Setup
@@ -203,6 +203,31 @@ python scripts/eval.py --config configs/eval/default.yaml --only jepa_tiny_ctx_t
 **Output** in `reports/eval/<name>/`:
 - `report.md` and `results.json`;
 - `heads_<backbone>_<HxW>.pt`: the fitted probes, which **are** the deployable frame and heatmap heads used by the M5 export. Standardisation is folded into the weights.
+
+## M5: Export and int8
+
+```bash
+python scripts/export.py --encoder runs/ijepa_tiny_224_context_only_s0/encoder_target.pt \
+    --heads-dir reports/eval/v1 --heads-backbone jepa_tiny_ctx_target \
+    --index data/index/underwater_v1.parquet --root data \
+    --sizes 112x112 160x160 224x224 112x208 --out exports/tiny_ctx
+```
+
+For each input size this produces (all under `exports/tiny_ctx/`):
+- **ONNX fp32**: encoder + frame head + heatmap head in one graph. Input is RGB in [0, 1]; normalisation happens inside the graph. Checked against PyTorch.
+- **Static int8**: QDQ, S8S8, per-channel weights. Only MatMul/Gemm/Conv are quantised; LayerNorm, Softmax and GELU stay in float. Calibration uses 300 images **stratified across dark/murky/clear**.
+- **Dynamic int8**: the fallback.
+- **ncnn fp16**: via PNNX. For this conversion, attention is re-expressed as `nn.MultiheadAttention`, giving identical outputs, so PNNX maps it onto ncnn's fused MultiHeadAttention layer.
+- `manifest.json`: tells the Pi runtime the input size, grid and output meanings.
+- `parity.md`: frame AUROC, patch AUROC, centroid error, heatmap correlation, file size and latency for torch fp32 vs each exported model. Anything outside the tolerances (|Δ AUROC| ≤ 0.01, Δ centroid ≤ 1°) is marked **NO**.
+
+If static int8 fails parity, try these in order:
+1. `--calib-method percentile`;
+2. the dynamic model;
+3. keep the first/last layers in float (`talosaur.export.quantize.first_and_last_nodes`);
+4. deploy ncnn fp16. The Pi's A76 cores do fp16 arithmetic natively.
+
+ncnn int8 needs ncnn's `ncnn2table`/`ncnn2int8` tools; see `docs/PI5.md`.
 
 ## Repository layout
 

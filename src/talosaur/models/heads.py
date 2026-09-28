@@ -48,6 +48,8 @@ class TalosaurNet(nn.Module):
         self.input_hw = tuple(input_hw)
         p = encoder.patch_size
         self.grid_hw = (self.input_hw[0] // p, self.input_hw[1] // p)
+        if hasattr(encoder, "freeze_pos_embed"):
+            encoder.freeze_pos_embed(*self.grid_hw)
 
     def forward(self, x: torch.Tensor):
         x = (x - self.mean) / self.std
