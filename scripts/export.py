@@ -19,6 +19,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from talosaur.data.index import read_table
 from talosaur.export.onnx_export import build_net, check_onnx_matches_torch, export_onnx, manifest_entry
 from talosaur.export.parity import labelled_batch, parity_markdown, run_parity
@@ -36,7 +38,11 @@ log = get_logger("export")
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--encoder", required=True, help="runs/<run>/encoder_target.pt")
+    ap.add_argument(
+        "--encoder",
+        required=True,
+        help="runs/<run>/encoder_target.pt, or random:vit_tiny / random:vit_small (untrained; for the Pi benchmark)",
+    )
     ap.add_argument("--which", default="target", choices=["target", "context"])
     ap.add_argument("--heads-dir", default=None, help="reports/eval/<name> with heads_<backbone>_<HxW>.pt")
     ap.add_argument("--heads-backbone", default=None, help="backbone name used in scripts/eval.py")
@@ -47,8 +53,17 @@ def main(argv=None) -> int:
     ap.add_argument("--name", default="vit_tiny")
     ap.add_argument("--calib", type=int, default=300, help="calibration images (stratified dark/murky/clear)")
     ap.add_argument("--calib-method", default="minmax", choices=["minmax", "percentile", "entropy"])
+    ap.add_argument(
+        "--calib-random",
+        type=int,
+        default=0,
+        help="no --index: calibrate static int8 on N random images (speed/memory benchmarks only)",
+    )
     ap.add_argument("--parity-images", type=int, default=400)
     ap.add_argument("--no-ncnn", action="store_true")
+    ap.add_argument(
+        "--ncnn-calib", action="store_true", help="also save the calibration images for ncnn2table"
+    )
     ap.add_argument("--tol-auroc", type=float, default=0.01)
     ap.add_argument("--tol-centroid-deg", type=float, default=1.0)
     a = ap.parse_args(argv)
@@ -60,6 +75,8 @@ def main(argv=None) -> int:
         "encoder": str(a.encoder),
         "models": {},
     }
+    if str(a.encoder).startswith("random:") or (a.calib_random and df is None):
+        manifest["note"] = "benchmark-only export (untrained encoder and/or random int8 calibration)"
     parity_all, md = {}, ["# Export parity", ""]
     worst_ok = True
     for size in a.sizes:
@@ -83,6 +100,14 @@ def main(argv=None) -> int:
             files["onnx_int8"] = quantize_static_int8(
                 fp32, out / f"{model}_int8.onnx", imgs, method=a.calib_method
             ).name
+            if a.ncnn_calib:  # the same stratified images, as .npy for ncnn2table (docs/PI5.md)
+                from talosaur.export.ncnn_convert import write_ncnn_calibration_list
+
+                lst = write_ncnn_calibration_list(imgs, out / "ncnn" / f"calib_{model}")
+                log.info(f"{model}: ncnn2table list -> {lst}")
+        elif a.calib_random:
+            imgs = np.random.default_rng(0).random((a.calib_random, 3, *hw), dtype=np.float32)
+            files["onnx_int8"] = quantize_static_int8(fp32, out / f"{model}_int8.onnx", imgs).name
         files["onnx_dyn8"] = quantize_dynamic_int8(fp32, out / f"{model}_dyn8.onnx").name
         if not a.no_ncnn:
             from talosaur.export.ncnn_convert import export_ncnn

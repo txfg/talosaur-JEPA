@@ -91,23 +91,40 @@ def load_runner(export_dir: str | Path, model: str, runtime: str = "ort_int8", t
     entry = manifest["models"][model]
     spec = ModelSpec.from_manifest(entry)
     files = entry["files"]
-    if runtime.startswith("ort"):
-        key = {"ort_fp32": "onnx_fp32", "ort_int8": "onnx_int8", "ort_dyn8": "onnx_dyn8"}[runtime]
-        return OrtRunner(export_dir / files[key], spec, threads)
-    if runtime.startswith("ncnn"):
-        tag = "ncnn_int8" if runtime == "ncnn_int8" else "ncnn"
-        return NcnnRunner(
-            export_dir / files[f"{tag}_param"],
-            export_dir / files[f"{tag}_bin"],
-            spec,
-            threads,
-            fp16=runtime != "ncnn_fp32",
+    if runtime not in RUNTIME_FILES:
+        raise ValueError(f"unknown runtime {runtime!r}; choose from {sorted(RUNTIME_FILES)}")
+    missing = [k for k in RUNTIME_FILES[runtime] if k not in files]
+    if missing:
+        have = sorted(r for r, keys in RUNTIME_FILES.items() if all(k in files for k in keys))
+        raise FileNotFoundError(
+            f"{model}: the export has no {missing[0]} for runtime {runtime!r}; available: {have}"
         )
-    raise ValueError(runtime)
+    if runtime.startswith("ort"):
+        return OrtRunner(export_dir / files[RUNTIME_FILES[runtime][0]], spec, threads)
+    param, binf = RUNTIME_FILES[runtime]
+    return NcnnRunner(
+        export_dir / files[param], export_dir / files[binf], spec, threads, fp16=runtime == "ncnn_fp16"
+    )
+
+
+# manifest file keys each runtime needs
+RUNTIME_FILES = {
+    "ort_fp32": ("onnx_fp32",),
+    "ort_int8": ("onnx_int8",),
+    "ort_dyn8": ("onnx_dyn8",),
+    "ncnn_fp16": ("ncnn_param", "ncnn_bin"),
+    "ncnn_fp32": ("ncnn_param", "ncnn_bin"),
+    "ncnn_int8": ("ncnn_int8_param", "ncnn_int8_bin"),
+}
+
+
+def available_runtimes(entry: dict) -> list[str]:
+    """Runtimes a manifest entry has files for."""
+    return [r for r, keys in RUNTIME_FILES.items() if all(k in entry["files"] for k in keys)]
 
 
 def resize_bilinear_u8(img: np.ndarray, h: int, w: int) -> np.ndarray:
-    """Fast-enough numpy bilinear resize for small targets (used when OpenCV is not installed)."""
+    """Plain bilinear resize (pixel-centre aligned, rounded) - for upsampling or small changes."""
     H, W = img.shape[:2]
     if (H, W) == (h, w):
         return img
@@ -120,9 +137,31 @@ def resize_bilinear_u8(img: np.ndarray, h: int, w: int) -> np.ndarray:
     wy = np.clip(ys - y0, 0, 1)[:, None, None].astype(np.float32)
     wx = np.clip(xs - x0, 0, 1)[None, :, None].astype(np.float32)
     im = img.astype(np.float32)
+    if im.ndim == 2:
+        im = im[..., None]
     top = im[y0][:, x0] * (1 - wx) + im[y0][:, x1] * wx
     bot = im[y1][:, x0] * (1 - wx) + im[y1][:, x1] * wx
-    return (top * (1 - wy) + bot * wy).astype(np.uint8)
+    out = np.clip(top * (1 - wy) + bot * wy + 0.5, 0, 255).astype(np.uint8)
+    return out.reshape((h, w) + img.shape[2:])
+
+
+def resize_u8(img: np.ndarray, h: int, w: int) -> np.ndarray:
+    """Anti-aliased resize without OpenCV: integer box (area) reduction, then bilinear.
+
+    Plain bilinear aliases badly when shrinking a 1280x720 frame to 208x112; the Pi camera's
+    ISP (and OpenCV's INTER_AREA, PIL) filter instead, so replayed video should too. The box
+    stage trims at most (factor - 1) pixels, split evenly between the edges so the image centre
+    (and thus every bearing) stays put.
+    """
+    H, W = img.shape[:2]
+    fy, fx = max(1, H // h), max(1, W // w)
+    if fy > 1 or fx > 1:
+        Hc, Wc = H // fy * fy, W // fx * fx
+        oy, ox = (H - Hc) // 2, (W - Wc) // 2
+        crop = img[oy : oy + Hc, ox : ox + Wc].astype(np.float32)
+        crop = crop.reshape(Hc // fy, fy, Wc // fx, fx, *img.shape[2:]).mean(axis=(1, 3))
+        img = np.clip(crop + 0.5, 0, 255).astype(np.uint8)
+    return resize_bilinear_u8(img, h, w)
 
 
 def preprocess(rgb: np.ndarray, input_hw: tuple[int, int]) -> np.ndarray:
@@ -134,5 +173,5 @@ def preprocess(rgb: np.ndarray, input_hw: tuple[int, int]) -> np.ndarray:
 
             rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
         except ImportError:
-            rgb = resize_bilinear_u8(rgb, h, w)
+            rgb = resize_u8(rgb, h, w)
     return np.ascontiguousarray(rgb.transpose(2, 0, 1), dtype=np.float32) * (1.0 / 255.0)

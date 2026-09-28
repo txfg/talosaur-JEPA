@@ -1,0 +1,50 @@
+# Onboard vision loop on the Raspberry Pi 5 (python -m talosaur.onboard.app --config configs/onboard/pi5.yaml)
+model:
+  export_dir: exports/tiny_ctx      # copied from the training box (scripts/export.py output)
+  name: vit_tiny_112x208            # 16:9 grid (13x7) keeps the full wide field of view
+  runtime: ort_int8                 # ort_int8 | ort_dyn8 | ort_fp32 | ncnn_fp16 | ncnn_int8 (pick from the benchmark)
+  threads: 3                        # leave one core for camera, encoder and control
+
+source:
+  kind: picamera2                   # picamera2 | video | synthetic
+  main_size: [1280, 720]            # recording stream (the model reads the ISP-scaled lores stream)
+  fps: 15
+  hdr: "off"                        # off | sensor (IMX708, 2304x1296 max) | isp | night (Pi 5 ISP); pool-test before use
+  controls:
+    AfMode: 0                       # manual focus: autofocus hunts in murky water
+    LensPosition: 1.0               # dioptres; flat port: ~1.33 / d for animals d m away (1.0 = ~1.3 m); tune in the pool
+    AeExposureMode: 1               # "short": less motion blur, more gain
+    AwbEnable: true
+
+recording:
+  enabled: true
+  out_dir: recordings
+  bitrate: 6000000
+  preroll_s: 5                      # keeps the approach, but encodes all the time; 0 = encode only while recording (docs/PI5.md §6)
+
+guidance:                           # tuning guide: docs/PI5.md section 11
+  heat_thr: 0.5                     # a blob needs at least one patch with p(animal) >= this ...
+  heat_thr_low: 0.35                # ... and extends over connected patches >= this (hysteresis)
+  min_mass: 0.6                     # ignore blobs lighter than this (single specks of marine snow)
+  camera:
+    port: flat                      # flat | dome | air | calibrated (after scripts/pi/calibrate_camera.py)
+    hfov_deg: 102.0
+    vfov_deg: 67.0
+  controller:
+    target_size: 0.22               # desired apparent size (sqrt of area fraction)
+    standoff_size: 0.40             # back off above this
+    max_surge: 0.4
+    max_yaw: 0.8
+  fsm:
+    frame_on: 0.6
+    heat_on: 0.6
+    acquire_n: 3
+    acquire_m: 5
+    lost_timeout_s: 4.0
+    postroll_s: 3.0
+
+backends:
+  - {kind: jsonl, path: logs/guidance.jsonl}
+  - {kind: udp, host: 127.0.0.1, port: 14600}   # JSON commands for the autopilot bridge
+
+stats_every_s: 10

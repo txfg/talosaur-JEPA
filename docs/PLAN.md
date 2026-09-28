@@ -306,7 +306,7 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
 - *Novelty (unsupervised, optional).* Mahalanobis distance of the current pooled embedding from a running mean/covariance of recent frames. It flags "something new in view" even for animals missing from the training labels.
 
 **Guidance (`talosaur.guidance`, numpy only):**
-1. Threshold the heatmap, take connected components, and pick the target component: the one nearest the previous track, otherwise the one with the most mass.
+1. Threshold the heatmap with hysteresis (a seed patch above `heat_thr`, extent over neighbours above `heat_thr_low`), take connected components, drop blobs lighter than `min_mass`, and pick the target component: the one nearest the previous track, otherwise the one with the most mass.
 2. Probability-weighted centroid (sub-patch precision) and apparent size (√area fraction).
 3. Pixel → angle through a camera model:
    - Camera Module 3 Wide: IMX708, 2.75 mm f/2.2, **102° × 67° FoV in air** (120° diagonal);
@@ -321,7 +321,7 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
 6. State machine: **SEARCH → ACQUIRE** (N of M frames above threshold) **→ TRACK → FILM → LOST** (hold/turn toward last bearing for T s) **→ SEARCH**. Vehicle-level safety stays with the autopilot.
 7. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11).
 
-**Recording.** The main stream is H.264-encoded only in TRACK/FILM, with a pre-roll circular buffer so the approach is captured. The low-res stream always feeds the model. The benchmark measures model fps *while recording*, which tells us the real sustainable rate.
+**Recording.** The state machine decides when the main stream is saved: from entering TRACK until a post-roll after returning to SEARCH. A pre-roll ring buffer keeps the approach, but it means the software encoder runs all the time. `preroll_s: 0` encodes only while recording, trading the approach footage for CPU (`docs/PI5.md` §6). The low-res stream always feeds the model. The benchmark measures model fps *while recording*, which tells us the real sustainable rate.
 
 **Replay tool.** `scripts/replay.py video.mp4` runs the full onboard loop on recorded footage on your desktop or on the Pi. It writes an annotated video (heatmap, centroid, track, state, commands) plus a command log. This is how guidance gets tuned without the vehicle.
 
@@ -454,7 +454,7 @@ Each milestone ends with green CI, a README section, and a short "run this, send
 15. **Synthetic degradation realism.** Checked visually via `viz_degrade`, and indirectly by the real dark/murky slices.
 
 **Deployment**
-16. **Pi 5 fps and memory are unmeasured.** The estimates in §7 come from one ncnn data point. **Measure early**: the M6 benchmark can run with random weights before any training finishes.
+16. **Pi 5 fps and memory are unmeasured.** The estimates in §7 come from one ncnn data point. **Measure early**: the M6 benchmark can run with random weights before any training finishes (`scripts/export.py --encoder random:vit_tiny --calib-random 32`, then `docs/PI5.md` §3).
 17. **Int8 accuracy for ViTs is uncertain.** We have fallbacks, and ncnn fp16 may turn out as fast as ORT int8 on the A76.
 18. **Thermal throttling inside a sealed hull.** The sustained benchmark logs temperatures and throttle flags, but the hull's thermal path is yours to test.
 19. **Flat vs dome port** changes the bearing calibration.

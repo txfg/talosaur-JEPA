@@ -4,6 +4,7 @@ Self-supervised vision for **Talosaur**, a low-cost AUV that finds, follows, and
 
 - **Design and plan:** [`docs/PLAN.md`](docs/PLAN.md)
 - **Dataset sources and licenses:** [`docs/DATASETS.md`](docs/DATASETS.md)
+- **Raspberry Pi 5 setup, benchmark and onboard runtime:** [`docs/PI5.md`](docs/PI5.md)
 
 | Milestone | Status |
 |---|---|
@@ -13,7 +14,7 @@ Self-supervised vision for **Talosaur**, a low-cost AUV that finds, follows, and
 | M3 probes, heads, and condition slices | done |
 | M4 baselines | done |
 | M5 ONNX export and int8 | done |
-| M6 Pi 5 benchmark and onboard runtime | planned |
+| M6 Pi 5 benchmark and onboard runtime | done (run the benchmark on your Pi) |
 
 ## Setup
 
@@ -33,7 +34,13 @@ Turing GPUs (RTX 20xx) have no bf16 hardware, so all training uses **fp16 autoca
 
 ### Raspberry Pi 5 (1 GB)
 
-The onboard runtime needs only `numpy`, `pyyaml`, and `onnxruntime` (or `ncnn`). **Never install torch on the Pi.** Setup instructions arrive with M6.
+The onboard runtime needs only `numpy`, `pyyaml`, and `onnxruntime` (or `ncnn`). **Never install torch on the Pi.**
+
+```bash
+bash scripts/pi/setup_pi5.sh      # apt picamera2 + ffmpeg, venv with --system-site-packages, pip install -e .[pi]
+```
+
+Full instructions are in [`docs/PI5.md`](docs/PI5.md).
 
 ## M1: Build the dataset
 
@@ -229,6 +236,38 @@ If static int8 fails parity, try these in order:
 
 ncnn int8 needs ncnn's `ncnn2table`/`ncnn2int8` tools; see `docs/PI5.md`.
 
+## M6: Raspberry Pi 5 benchmark and onboard runtime
+
+The Pi side does not need a trained model: speed and memory don't depend on the weights. Start now:
+
+```bash
+# training box: full-size random-weight exports for the benchmark
+python scripts/export.py --encoder random:vit_tiny --calib-random 32 \
+    --sizes 112x112 160x160 224x224 112x208 --out exports/bench_tiny
+
+# Pi: fps (model alone and full loop), latency, peak memory, temperature, throttling
+python -m talosaur.onboard.benchmark --export-dir exports/bench_tiny \
+    --runtimes ort_fp32 ort_int8 ort_dyn8 ncnn_fp16 --threads 2 3 4 --out reports/pi5/bench_idle
+python -m talosaur.onboard.benchmark --export-dir exports/bench_tiny --runtimes ort_int8 ncnn_fp16 \
+    --threads 2 3 4 --record-load picamera2 --out reports/pi5/bench_rec        # while recording 1080p30
+```
+
+The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/pi5.yaml`) runs:
+1. The camera's ISP-scaled 208×112 stream feeds the exported model.
+2. **Guidance** turns the heatmap into a target: connected blobs with hysteresis, then a sub-patch centroid and apparent size.
+3. The target becomes a bearing and elevation through a camera model: flat-port refraction, or an in-water calibration including lens distortion.
+4. A Kalman tracker with outlier gating smooths it.
+5. A state machine runs SEARCH → ACQUIRE → TRACK → FILM → LOST.
+6. A controller issues normalised yaw-rate / heave / surge requests, with a deadband, rate limits and a hard stand-off.
+7. **Recording** follows the state machine, with a pre-roll ring buffer so the approach is kept.
+8. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge. The autopilot choice is still open.
+
+Two tools support it:
+- **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.
+- **Replay** (`scripts/replay.py`): runs the identical pipeline on recorded video at the Pi's measured frame rate and writes an annotated video plus telemetry. This is how guidance is tuned without the vehicle.
+
+Everything onboard is torch-free, and CI checks this on Python 3.13, the version Raspberry Pi OS Trixie ships. The picamera2 code is tested against a fake camera that follows the picamera2 0.3.37 API. **Nothing has run on a real Pi yet**: `docs/PI5.md` §13 lists what still needs hardware and §14 what to send back.
+
 ## Repository layout
 
 ```
@@ -242,9 +281,9 @@ src/talosaur/
   export/    ONNX, int8, ncnn                                   [M5]
   guidance/  heatmap → bearing/size → track → commands (numpy)  [M6]
   onboard/   Pi 5 runtime + benchmark (no torch)                [M6]
-configs/     Hydra configs
-scripts/     entry points
-tests/       CPU-only tests on synthetic data
+configs/     Hydra configs (+ configs/onboard/pi5.yaml for the vehicle)
+scripts/     entry points (data/, train, eval, export, replay; pi/ setup + camera calibration)
+tests/       CPU-only tests on synthetic data (onboard/guidance tests also run without torch)
 ```
 
 ## Licensing

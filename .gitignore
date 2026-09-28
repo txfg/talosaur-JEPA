@@ -21,6 +21,8 @@ venv/
 /exports/
 /checkpoints/
 /logs/
+/recordings/
+/calib_imgs/
 *.pt
 *.pth
 *.onnx

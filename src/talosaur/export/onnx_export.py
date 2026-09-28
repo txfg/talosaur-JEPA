@@ -22,9 +22,18 @@ OUTPUT_NAMES = ["frame_logit", "heatmap_logit", "embedding"]
 
 
 def load_encoder(encoder_ckpt: str | Path, which: str = "target"):
+    """``encoder_ckpt``: a training run's ``encoder_target.pt``, or ``random:<preset>`` (e.g.
+    ``random:vit_tiny``) for an untrained encoder - speed and memory on the Pi do not depend on the
+    weights, so the Pi benchmark can run before any training has finished."""
     from talosaur.eval.backbones import JepaBackbone
 
-    bb = JepaBackbone(str(encoder_ckpt), which=which)
+    if str(encoder_ckpt).startswith("random:"):
+        from talosaur.models.vit import build_vit
+
+        torch.manual_seed(0)
+        bb = JepaBackbone(encoder=build_vit(str(encoder_ckpt).split(":", 1)[1]))
+    else:
+        bb = JepaBackbone(str(encoder_ckpt), which=which)
     enc = bb.encoder
     enc.set_attn_impl("math")  # explicit matmul/softmax: ONNX- and PNNX-friendly
     return enc, bb.info.mean, bb.info.std

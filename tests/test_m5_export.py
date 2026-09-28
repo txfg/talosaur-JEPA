@@ -130,9 +130,12 @@ def test_export_script_end_to_end(synthetic_index, tmp_path):
             "16",
             "--parity-images",
             "16",
+            "--ncnn-calib",
         ]
     )
     assert code in (0, 3)
+    calib = (out / "ncnn" / "calib_vit_tiny_48x96" / "calib_list.txt").read_text().split()
+    assert len(calib) == 16 and np.load(calib[0]).shape == (3, 48, 96)
     man = json.loads((out / "manifest.json").read_text())
     entry = man["models"]["vit_tiny_48x96"]
     assert entry["grid"] == [3, 6] and entry["input"]["shape"] == [1, 3, 48, 96]
@@ -144,3 +147,43 @@ def test_export_script_end_to_end(synthetic_index, tmp_path):
     r = load_runner(out, "vit_tiny_48x96", "ort_int8", threads=1)
     f, h, e = r(np.zeros((3, 48, 96), dtype=np.float32))
     assert h.shape == (3, 6)
+
+
+def _export_script():
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "export_script", pathlib.Path(__file__).parents[1] / "scripts" / "export.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@requires_onnx
+def test_random_encoder_benchmark_export(tmp_path):
+    """The Pi benchmark must not wait for training: full-depth random ViT-Ti, int8 on noise."""
+    out = tmp_path / "bench"
+    code = _export_script().main(
+        [
+            "--encoder",
+            "random:vit_tiny",
+            "--calib-random",
+            "4",
+            "--sizes",
+            "32x64",
+            "--no-ncnn",
+            "--out",
+            str(out),
+        ]
+    )
+    assert code == 0
+    man = json.loads((out / "manifest.json").read_text())
+    assert "benchmark-only" in man["note"]
+    entry = man["models"]["vit_tiny_32x64"]
+    assert set(entry["files"]) == {"onnx_fp32", "onnx_int8", "onnx_dyn8"}
+    from talosaur.onboard.runtime import load_runner
+
+    f, h, e = load_runner(out, "vit_tiny_32x64", "ort_int8", threads=1)(np.zeros((3, 32, 64), np.float32))
+    assert h.shape == (2, 4) and e.shape == (192,)
