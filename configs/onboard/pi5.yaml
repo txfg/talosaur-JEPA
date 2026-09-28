@@ -56,7 +56,8 @@ guidance:                           # tuning guide: docs/PI5.md section 11
   encounter:                        # how long to film each animal, and which ones were filmed (docs/SEARCH.md)
     rule: mvt                       # mvt: leave when more footage is worth less than searching on | fixed: max_s only
     tau_s: 30                       # footage of one animal is worth less and less: ~95% of its value after 3 x tau_s framed
-    min_s: 10                       # film at least this long (unless it flees)
+    min_s: 10                       # film at least this long
+    flee_s: 2                       # swimming away this long: stop approaching (it is never chased)
     max_s: 180                      # never longer than this (0 = no cap)
     giveup_s: 30                    # no good shot by then: move on
     novelty_bonus: 1.0              # an animal unlike those already filmed is worth up to 2x

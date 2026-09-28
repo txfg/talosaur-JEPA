@@ -23,21 +23,17 @@ is an extrapolation, and says so.
 
 - **By day the main layer is far below 200 m.** A ship-mounted 38 kHz ADCP in the northern Gulf
   (summers 2002–2003) found the main deep scattering layer at 450–550 m by day. The exception was
-  near a front with Mississippi River plume water, where it rose to 200–300 m. *(abstract;
+  near a front with Mississippi River plume water, where it rose to 200–300 m. *(abstract, 3/3;
   [Kaltenberg et al. 2007](https://aquila.usm.edu/goms/vol25/iss2/1/))*
 - **At dusk the migrators cross 100–200 m and end up above it.** At a northern Gulf site, part of
   the mesopelagic backscatter moved into the upper epipelagic, shallower than 100 m, while
-  staying below the thermocline. At night the 100–200 m band held a more variable mix of species,
-  consistent with animals also redistributing within the upper water column. This was a single
-  30-hour survey in June 2011. *(abstract, 3/3;
+  staying below the thermocline. This was a single 30-hour survey at one site in June 2011, so
+  it shows the pattern, not what a given night holds. *(abstract, 3/3;
   [D'Elia et al. 2016](https://www.sciencedirect.com/science/article/abs/pii/S0967063715301989))*
-- **Timing.** A 10-year moored ADCP record in the western Gulf (2008–2018) gives the timing:
-  - the shallowest migrating group starts rising about 1 h before sunset and starts descending
-    about 2 h before sunrise;
-  - backscatter is highest from the surface to about 100 m and at 400–600 m;
-  - the effect of the moon is clearest at 1000–1200 m, not in the upper water column.
-
-  *(abstract; [Ursella et al. 2021](https://www.sciencedirect.com/science/article/abs/pii/S0079661121000495))*
+- **Timing.** A 10-year moored ADCP record in the western Gulf (2008–2018, 120–1300 m) found that
+  the shallowest migrating group starts rising about 1 h before sunset and starts descending
+  about 2 h before sunrise. Migration also varies with the season and the moon. *(abstract, 3/3
+  for the timing; [Ursella et al. 2021](https://www.sciencedirect.com/science/article/abs/pii/S0079661121000495))*
 
 **What the planner does with this.** Treat 100–200 m as a corridor:
 - profile the whole range first;
@@ -269,15 +265,19 @@ also the yaw and heave rates that steer toward them. Either kind of bridge works
    | 10 min | 90 s | 111 s |
    | 60 min | 144 s | 164 s |
 
-5. **Other exits:**
-   - **`fled`**: the apparent size shrinks fast (`flee_rate`) for `flee_s` while the vehicle is
-     not backing off. The animal is leaving, and chasing it only disturbs it.
+5. **Never chase.** If the apparent size shrinks fast (`flee_rate`) for `flee_s` while the
+   vehicle is not backing off, the animal is swimming away. The vehicle stops approaching and
+   keeps it in view by turning only; the rule above keeps deciding from the footage it gets.
+   - Many animals settle after a short burst and can be filmed on.
+   - One that keeps going is soon out of sight. That encounter is logged as **`fled`**, and the
+     animal is left alone for the cooldown, like one the vehicle chose to leave.
+6. **Other exits:**
    - **`no_shot`**: no good shot within `giveup_s`, or the rule above gives up on an animal that
      was never well framed (it leaves after about 23 s with the default prior).
    - **`budget`**: the hard cap `max_s` is reached.
    - **`enough`**: the MVT rule above.
 
-   `rule: fixed` keeps just `max_s`.
+   `rule: fixed` keeps just `max_s`; the vehicle still never chases.
 
 The telemetry shows `encounter.marginal_rate` and `long_run_rate` every frame. The encounter log
 records `good_s`, `value`, `novelty_weight` and the reason each encounter ended, so the rule can

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Compare search and filming settings in the closed-loop simulator (docs/SEARCH.md §7).
 
-  python scripts/sim_compare.py --out reports/sim/compare.jsonl            # ~35 min on 4 cores
+  python scripts/sim_compare.py --out reports/sim/compare.jsonl            # ~40 min on 4 cores
   python scripts/sim_compare.py --report reports/sim/compare.jsonl         # tables only
 
 Three experiments, each repeated with ``--seeds`` different random worlds:
@@ -11,7 +11,8 @@ Three experiments, each repeated with ``--seeds`` different random worlds:
   ``depth`` (depth bands only), ``adaptive`` (both; the default). Lights while searching: off,
   half, and (adaptive only) full. Start at 21:00 (night) or 18:18 (dusk, the layer is rising).
 * **B. How long to film each animal**: fixed 60 s, fixed 180 s, and the marginal value rule
-  (``mvt``), where animals are scarce (0.003 per m^3) and plentiful (0.03 per m^3).
+  (``mvt``), where animals are scarce (0.003 per m^3, twice the seeds) and plentiful
+  (0.03 per m^3).
 * **C. Navigation input**: the adaptive planner without depth and heading (scan and hop).
 
 Each line of the output is one run (partial results survive an interruption). The report prints
@@ -49,8 +50,11 @@ def plan(seeds: list[int]) -> list[dict]:
         jobs.append({**base, "batch": "A", "strategy": s, "light": light, "start": start, "seed": seed})
     for start, seed in itertools.product([21.0, 18.3], seeds):
         jobs.append({**base, "batch": "A", "light": 1.0, "start": start, "seed": seed})
-    for rule, dens, seed in itertools.product(["fixed60", "fixed180", "mvt"], [0.003, 0.03], seeds):
-        jobs.append({**base, "batch": "B", "rule": rule, "density": dens, "seed": seed})
+    for rule in ["fixed60", "fixed180", "mvt"]:
+        # scarce animals: few encounters per run, so twice the seeds (these runs are cheap)
+        for dens, ss in ((0.003, seeds + [s + 1000 for s in seeds]), (0.03, seeds)):
+            for seed in ss:
+                jobs.append({**base, "batch": "B", "rule": rule, "density": dens, "seed": seed})
     for seed in seeds:
         jobs.append({**base, "batch": "C", "nav": False, "seed": seed})
     return sorted(jobs, key=lambda j: -j["density"] * (1 + j["light"]))  # slowest first

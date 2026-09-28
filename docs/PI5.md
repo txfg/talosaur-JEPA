@@ -367,18 +367,21 @@ under `guidance.encounter` in `pi5.yaml`; the reasoning and evidence are in docs
 1. **Encounter.** Locking onto an animal (ACQUIRE → TRACK) starts an encounter with a new id. In the
    default continuous mode the video is already running; in events mode a clip starts.
 2. **When to leave** (`rule: mvt`, the default). Time in TRACK, FILM and LOST counts. The sub leaves
-   for one of four reasons:
+   for one of three reasons:
    - `enough`: the animal has been well framed long enough that more footage is worth less than
      searching on. How long that is depends on how easy animals have been to find so far, and on
      how different this one is from those already filmed.
-   - `fled`: it is swimming away (its apparent size shrinks fast for `flee_s` while the sub is not
-     backing off). Chasing it only disturbs it.
    - `no_shot`: no good shot within `giveup_s` (30 s), or it was never well framed and the rule
      gave up on it sooner.
    - `budget`: the hard cap `max_s` (180 s) is reached.
 
-   Nothing ends an encounter before `min_s` (10 s) except `fled`. `rule: fixed` keeps only the
-   hard cap, as before this change.
+   Nothing ends an encounter before `min_s` (10 s). `rule: fixed` keeps only the hard cap, as
+   before this change.
+
+   **The sub never chases.** If the animal swims away (its apparent size shrinks fast for
+   `flee_s` while the sub is not backing off), the sub stops approaching and only turns to keep it
+   in view. If it gets away, the encounter ends as `fled`, and that animal is left alone for the
+   cooldown.
 3. **RELEASE.** On leaving, the state machine enters RELEASE:
    - the video keeps running in continuous mode, and the encounter log marks where this animal is
      in it; in events mode the clip stops after its post-roll;
@@ -404,7 +407,7 @@ under `guidance.encounter` in `pi5.yaml`; the reasoning and evidence are in docs
 5. **Encounter log.** Every encounter is written to `logs/encounters.jsonl`, and also sent as a
    `kind: "encounter"` message on the backends. Each line records:
    - the animal's id;
-   - why it ended (`enough`, `fled`, `no_shot`, `budget`, `lost` or `shutdown`);
+   - why it ended (`enough`, `no_shot`, `budget`, `fled`, `lost` or `shutdown`);
    - total time on that animal (`engaged_s`), time well framed (`good_s`) and time in FILM;
    - the footage value it was credited with, and its novelty weight;
    - the best-framed moment (`best_t`);

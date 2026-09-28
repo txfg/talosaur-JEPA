@@ -263,7 +263,7 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
    - it swims long legs, switches to a tight local search after each find because animals come in patches, and steers away from water already covered.
 
    Without navigation input it scans and hops.
-7. **One animal at a time.** A foraging-theory rule, the marginal value theorem, decides how long each animal is worth filming. The sub leaves when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that flee, or never give a good shot, are left early; `encounter.max_s` (180 s) caps the rest. Then the sub backs off, turns away and swims on (RELEASE), and looks for a *different* animal.
+7. **One animal at a time.** A foraging-theory rule, the marginal value theorem, decides how long each animal is worth filming. The sub leaves when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that never give a good shot are left early; `encounter.max_s` (180 s) caps the rest. An animal that swims away is never chased: the sub stops approaching, keeps it in view if it can, and leaves it alone if it gets away. Then the sub backs off, turns away and swims on (RELEASE), and looks for a *different* animal.
    - Animals already filmed are recognised by appearance, not position: the model's patch features over the animal, compared with the ones it remembers.
    - A recognised animal is ignored for a cooldown. An animal that only swam out of view resumes where it left off. Animals unlike any filmed so far get more time.
    - Every encounter is logged to `logs/encounters.jsonl`, with why it ended and where it is in the video.

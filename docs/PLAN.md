@@ -323,7 +323,7 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
    - rate limits and a hard minimum stand-off.
 6. State machine: **SEARCH → ACQUIRE** (N of M frames above threshold) **→ TRACK → FILM → LOST** (hold/turn toward last bearing for T s) **→ SEARCH**. Vehicle-level safety stays with the autopilot.
 7. **One animal at a time** (added after M6 review).
-   - How long to film each animal follows the **marginal value theorem**: leave when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that flee, or never give a good shot, are left early; a hard cap bounds the rest. Then **RELEASE**: back off, turn away, swim on, and search for a different animal.
+   - How long to film each animal follows the **marginal value theorem**: leave when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that never give a good shot are left early; a hard cap bounds the rest. An animal that swims away is never chased. Then **RELEASE**: back off, turn away, swim on, and search for a different animal.
    - Animals already filmed are recognised by **appearance, not position**: the model's patch tokens pooled over the animal's blob, centred on the background, compared by cosine similarity. Animals unlike those already filmed are valued more.
    - A recognised animal is ignored for a cooldown. One that was only lost resumes where it left off.
    - Every encounter is logged with its video files (`docs/PI5.md` §12).

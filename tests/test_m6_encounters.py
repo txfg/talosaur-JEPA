@@ -229,14 +229,47 @@ def test_mvt_films_longer_when_animals_are_rare():
     assert times["plentiful"] < 25 < 80 < times["rare"]
 
 
-def test_mvt_lets_a_fleeing_animal_go_and_gives_up_without_a_good_shot():
-    import math
-
-    reason, t = _film_until_leave(EncounterManager(EncounterConfig()), 0.0, size_rate=-0.3)
-    assert reason == "fled" and t == pytest.approx(2.0, abs=0.3)
+def test_never_chases_a_fleeing_animal_and_logs_it_as_fled_when_it_gets_away():
+    m = EncounterManager(EncounterConfig())
+    tgt = Target(True, 0.5, 0.5, 0.15, 2.0, 0.95)
+    away = TrackState(active=True, confirmed=True, size=0.15, size_rate=-0.3, hits=10)
+    m.start(0.0, np.eye(4)[0])
+    t = 0.0
+    while not m.fleeing():  # swimming away (size shrinking 30%/s) for flee_s = 2 s
+        t += 0.2
+        m.observe(t, "TRACK", tgt, 0.95, None, away)
+    assert t == pytest.approx(2.0, abs=0.3) and m.leave_reason(t) is None  # stop chasing, keep filming
+    s = m.end(t + 5.0, "lost")  # then it got away
+    assert s["reason"] == "fled" and m.is_done_with(np.eye(4)[0], t + 6.0)[0]  # leave it alone
     # shrinking because the vehicle is backing off (stand-off) is not fleeing
     m = EncounterManager(EncounterConfig(max_s=15.0))
-    assert _film_until_leave(m, 0.0, size_rate=-0.3, own_surge=-0.2)[0] == "budget"
+    m.start(0.0, None)
+    for k in range(20):
+        m.observe(0.2 * (k + 1), "FILM", tgt, 0.95, None, away, own_surge=-0.2)
+    assert not m.fleeing()
+
+
+def test_pipeline_stops_approaching_an_animal_that_swims_away():
+    g = Guidance(GuidanceConfig())
+    p = np.full(GRID, 0.02, np.float32)
+    p[3, 6] = 0.95  # a small animal (one patch) straight ahead: too small to film, so approach
+    heat = np.log(p / (1 - p))
+    t, cmds = 0.0, []
+    for _ in range(30):
+        t += 0.1
+        cmd, tele, _ = g.step(t, np.array([3.0]), heat)
+        cmds.append(cmd.surge)
+    assert tele["state"] == "TRACK" and cmds[-1] > 0.0  # approaching
+    g.encounters.fleeing = lambda: True  # as if it were swimming away (see the test above)
+    for _ in range(10):
+        t += 0.1
+        cmd, tele, _ = g.step(t, np.array([3.0]), heat)
+    assert tele["state"] == "TRACK" and cmd.surge <= 0.0  # still filming it, no longer chasing
+
+
+def test_mvt_gives_up_without_a_good_shot():
+    import math
+
     # never well framed: its expected value decays with the framed fraction (10 s memory) until it
     # drops below the long-run rate - at 10 * ln(1 / (tau * R)) = 23 s with the default prior
     reason, t = _film_until_leave(EncounterManager(EncounterConfig()), 0.0, framed=False)

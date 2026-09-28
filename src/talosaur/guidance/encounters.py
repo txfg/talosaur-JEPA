@@ -15,10 +15,13 @@ applied to footage (docs/SEARCH.md):
 * leave once the expected marginal rate falls below R (after ``min_s``). Where animals are rare
   this films longer; where they are plentiful, shorter; badly framed animals are left sooner.
 
-Also: leave an animal that is fleeing (apparent size shrinking for ``flee_s`` while the vehicle
-is not backing off: chasing it only disturbs it), leave if there was no good shot within
-``giveup_s`` (or the rule gives up on an animal never well framed), and never exceed ``max_s``.
-``rule: fixed`` keeps just the ``max_s`` budget.
+Also: never chase an animal that is fleeing (apparent size shrinking for ``flee_s`` while the
+vehicle is not backing off). The vehicle stops approaching (``fleeing()``) and keeps it in view
+by turning only, and the footage value decides. Many animals settle after a short burst, and
+those that keep going are soon lost: such an encounter is logged as ``fled``, and the animal is
+then left alone for the cooldown like any animal the vehicle chose to leave. Also leave if there
+was no good shot within ``giveup_s`` (or the rule gives up on an animal never well framed), and
+never exceed ``max_s``. ``rule: fixed`` keeps just the ``max_s`` budget.
 
 Novelty is judged against every animal filmed so far this run (up to ``archive_size``), not only
 the ones still remembered for the cooldown.
@@ -41,14 +44,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-LEAVE_REASONS = ("enough", "fled", "no_shot", "budget")  # the vehicle chose to leave
+LEAVE_REASONS = ("enough", "fled", "no_shot", "budget")  # the vehicle left it, or it fled: done with it
 
 
 @dataclass
 class EncounterConfig:
     rule: str = "mvt"  # mvt | fixed
     max_s: float = 180.0  # hard cap per animal (TRACK + FILM + LOST); 0 = none
-    min_s: float = 10.0  # mvt: never leave sooner (unless it flees)
+    min_s: float = 10.0  # mvt: never leave sooner
     tau_s: float = 30.0  # mvt: footage value per animal saturates over ~this many framed seconds
     novelty_bonus: float = 1.0  # mvt: value weight 1 + bonus * (1 - similarity to animals filmed)
     framed_window_s: float = 10.0  # mvt: memory of the "well framed" fraction
@@ -56,7 +59,8 @@ class EncounterConfig:
     prior_s: float = 1800.0  # mvt: weight of that prior, in seconds
     giveup_s: float = 30.0  # leave if no good shot at all by then
     flee_rate: float = -0.15  # d(log size)/dt below this = receding ...
-    flee_s: float = 2.0  # ... for this long = fleeing: let it go
+    flee_s: float = 2.0  # ... for this long = fleeing: stop approaching (never chase)
+    fled_window_s: float = 10.0  # lost within this long of fleeing: logged as "fled"
     good_center: float = 0.2  # well framed: |cx - 0.5| and |cy - 0.5| below this ...
     good_min_size: float = 0.02  # ... apparent size at least this ...
     good_min_prob: float = 0.5  # ... and "animal" probability at least this
@@ -91,6 +95,7 @@ class Encounter:
     good_s0: float = 0.0  # ... at the start of this segment
     framed_ema: float = 1.0  # recent fraction of time well framed (optimistic start: approaching)
     flee_s: float = 0.0
+    fled_t: float | None = None  # last time it was fleeing
     film_s: float = 0.0
     frames: int = 0
     seen: int = 0
@@ -214,6 +219,11 @@ class EncounterManager:
         c = self.current
         return c is not None and self.cfg.max_s > 0 and c.engaged_s(t) >= self.cfg.max_s
 
+    def fleeing(self) -> bool:
+        """The current animal is swimming away: do not chase it."""
+        e = self.current
+        return e is not None and e.flee_s >= self.cfg.flee_s
+
     def leave_reason(self, t: float) -> str | None:
         """Why the vehicle should leave the current animal now, or None to keep filming."""
         e, c = self.current, self.cfg
@@ -223,8 +233,6 @@ class EncounterManager:
             return "budget"
         if c.rule == "fixed":
             return None
-        if e.flee_s >= c.flee_s:
-            return "fled"
         engaged = e.engaged_s(t)
         if engaged >= c.giveup_s and e.good_s < 1.0:
             return "no_shot"
@@ -294,6 +302,8 @@ class EncounterManager:
         enc.framed_ema += a * ((1.0 if framed else 0.0) - enc.framed_ema)
         receding = track is not None and track.active and track.size_rate < c.flee_rate and own_surge >= 0.0
         enc.flee_s = enc.flee_s + dt if receding else 0.0
+        if enc.flee_s >= c.flee_s:
+            enc.fled_t = t
         if found:
             enc.seen += 1
             enc.size_sum += target.size
@@ -310,6 +320,8 @@ class EncounterManager:
         enc, c = self.current, self.cfg
         if enc is None:
             return {}
+        if reason == "lost" and enc.fled_t is not None and t - enc.fled_t <= c.fled_window_s:
+            reason = "fled"  # it got away: leave it alone, like an animal the vehicle chose to leave
         engaged = enc.engaged_s(t)
         exhausted = reason in LEAVE_REASONS or (c.max_s > 0 and engaged >= c.max_s)
         desc = enc.descriptor()

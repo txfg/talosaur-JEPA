@@ -162,8 +162,8 @@ class Guidance:
             cmd = self.controller.shape(self.search.command(t, self.nav), t)
         elif st == State.ACQUIRE:
             cmd = self.controller.hold(t)
-        elif st == State.TRACK:
-            cmd = self.controller.track(track, t, approach=True)
+        elif st == State.TRACK:  # approach - unless it is swimming away: never chase an animal
+            cmd = self.controller.track(track, t, approach=not enc.fleeing())
         elif st == State.FILM:
             cmd = self.controller.track(track, t, approach=False)
         elif st == State.LOST:
