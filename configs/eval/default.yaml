@@ -1,0 +1,26 @@
+# Frozen-feature evaluation of JEPA encoders vs baselines (scripts/eval.py).
+index: data/index/underwater_v1.parquet
+root: data
+out: reports/eval/v1
+sizes: [[224, 224], [160, 160], [112, 112], [112, 208]]
+hfov: 102.0          # Camera Module 3 Wide (in air); used to express centroid errors in degrees
+vfov: 67.0
+robustness: true     # Underwater-C sweep (slower); secondary to the real dark/murky/clear slices
+backbones:
+  - {name: jepa_tiny_none,        kind: jepa, path: runs/ijepa_tiny_224_none_s0/encoder_target.pt}
+  - {name: jepa_tiny_ctx_target,  kind: jepa, path: runs/ijepa_tiny_224_context_only_s0/encoder_target.pt, which: target}
+  - {name: jepa_tiny_ctx_context, kind: jepa, path: runs/ijepa_tiny_224_context_only_s0/encoder_target.pt, which: context}
+  - {name: dinov2_vits14,         kind: dinov2_vits14}
+  - {name: imagenet_vit_tiny,     kind: timm, timm_name: vit_tiny_patch16_224.augreg_in21k_ft_in1k}
+  - {name: mobilenetv3_large,     kind: mobilenetv3_large}
+  - {name: random_vit_tiny,       kind: random_vit_tiny}
+probe:
+  pos_thr: 0.3
+  crop_sources: [fathomnet]
+  crops_per_image: 2
+  max_frame_train: 30000
+  max_patch_images_train: 8000
+  max_patch_samples: 400000
+  batch_size: 128
+  workers: 16
+  bootstrap: 500

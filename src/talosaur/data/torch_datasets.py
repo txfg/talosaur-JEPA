@@ -140,9 +140,25 @@ class LabeledFrames(Dataset):
 
         r = self.df.iloc[i]
         H, W = self.size
-        img = _load_pil(self.root / r["path"]).resize((W, H), Image.Resampling.BILINEAR)
+        img = _load_pil(self.root / r["path"])
         boxes = [b for b, a in zip(r["boxes"], r["box_is_animal"]) if a]
+        crop = r.get("crop") if "crop" in self.df.columns else None
         mask_path = r.get("mask_path")
+        if crop is not None and not (isinstance(crop, float) and np.isnan(crop)) and len(crop) == 4:
+            # crop-level sample (e.g. FathomNet presence crops): re-express boxes in crop coords
+            cx0, cy0, cx1, cy1 = (float(v) for v in crop)
+            iw, ih = img.size
+            img = img.crop((int(cx0 * iw), int(cy0 * ih), int(cx1 * iw), int(cy1 * ih)))
+            cw, ch = cx1 - cx0, cy1 - cy0
+            nb = []
+            for x0, y0, x1, y1 in boxes:
+                b = [(x0 - cx0) / cw, (y0 - cy0) / ch, (x1 - cx0) / cw, (y1 - cy0) / ch]
+                b = [min(max(v, 0.0), 1.0) for v in b]
+                if b[2] > b[0] and b[3] > b[1]:
+                    nb.append(b)
+            boxes = nb
+            mask_path = None
+        img = img.resize((W, H), Image.Resampling.BILINEAR)
         if isinstance(mask_path, str) and mask_path:
             with Image.open(self.root / mask_path) as m:
                 cov = mask_to_coverage(np.asarray(m.convert("L")) > 0, self.grid)
@@ -153,7 +169,7 @@ class LabeledFrames(Dataset):
         c = box_centroid_and_size(boxes) if boxes else None
         sl = r.get("slice", "other")
         return {
-            "image": torch.from_numpy(np.asarray(img, dtype=np.uint8).copy()).permute(2, 0, 1),
+            "image": torch.from_numpy(np.array(img, dtype=np.uint8)).permute(2, 0, 1),
             "frame_label": torch.tensor(int(r["frame_label"])),
             "coverage": torch.from_numpy(cov),
             "patch_valid": torch.tensor(valid),

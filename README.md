@@ -10,8 +10,8 @@ Self-supervised vision for **Talosaur**, a low-cost AUV that finds, follows, and
 | M0 scaffold (package, CI, synthetic data) | done |
 | M1 data pipeline | done (run it on your machine) |
 | M2 I-JEPA pretraining | done (run it on your GPUs) |
-| M3 probes, heads, and condition slices | planned |
-| M4 baselines | planned |
+| M3 probes, heads, and condition slices | done |
+| M4 baselines | done |
 | M5 ONNX export and int8 | planned |
 | M6 Pi 5 benchmark and onboard runtime | planned |
 
@@ -169,6 +169,40 @@ Implementation details:
   - `independent` degrades them separately.
 
 **Send me back** `metrics.jsonl`, `config.yaml`, and `env.json` from each run, plus the throughput JSON. That's enough for me to tune the next round.
+
+## M3 + M4: Evaluation and baselines
+
+Frozen-feature probes on the curated index, reported **separately on the dark / murky / clear slices** with bootstrap 95% CIs:
+
+```bash
+# edit configs/eval/default.yaml: point the jepa entries at your runs/<name>/encoder_target.pt
+python scripts/eval.py --config configs/eval/default.yaml
+python scripts/eval.py --config configs/eval/default.yaml --only jepa_tiny_ctx_target dinov2_vits14 --sizes 160x160 112x208
+```
+
+**Frame probe** ("animal present"): logistic regression on mean+max pooled tokens.
+- Data:
+  - DeepFish, River Herring and Brackish frames with frame labels;
+  - FathomNet as **presence crops**: a crop is positive if it contains most of an animal box and negative if it touches no box.
+- Weight decay is chosen on val.
+- Metrics: AUROC, AP, and **TPR at 5% FPR** (the search-mode false-alarm budget), overall, per slice and per source.
+
+**Patch probe** (heatmap): logistic regression on patch tokens.
+- Positives are patches with at least 30% box/mask coverage.
+- Negatives are used only where they are trustworthy: masks, exhaustive boxes, and empty frames.
+- Metrics: patch AUROC/AP and best IoU, plus the steering metrics:
+  - **centroid error in degrees** (as seen by the Camera Module 3 Wide, 102°×67°);
+  - apparent-size error;
+  - peak hit rate;
+  - "found" fraction.
+
+**Baselines**, run through the same harness: DINOv2 ViT-S/14, ImageNet ViT-Ti (AugReg), MobileNetV3-Large, and a random ViT-Ti as the lower bound. Every model is evaluated on its own patch grid (/14, /16); the steering metrics don't depend on the grid.
+
+**Underwater-C** (`robustness: true`) applies held-out synthetic degradations at severities 1–5 to test images and reuses the trained heads. It is secondary to the real slices.
+
+**Output** in `reports/eval/<name>/`:
+- `report.md` and `results.json`;
+- `heads_<backbone>_<HxW>.pt`: the fitted probes, which **are** the deployable frame and heatmap heads used by the M5 export. Standardisation is folded into the weights.
 
 ## Repository layout
 
