@@ -1,0 +1,17 @@
+name: ozfish
+title: OzFish (Australian Institute of Marine Science)
+homepage: https://github.com/open-AIMS/ozfish
+license_id: CC-BY-3.0-AU
+accept_id: CC-BY
+license_note: >
+  README text says CC BY 3.0 AU while its badge says CC BY 4.0; attribution-only either way.
+  Labels are not exhaustive, so OzFish is used for pretraining frames only.
+attribution: Australian Institute of Marine Science (AIMS)
+citation: 'Australian Institute of Marine Science (2020) OzFish Dataset. doi:10.25845/5e28f062c5097'
+access:
+  method: manual
+  base: https://storage.pawsey.org.au/public/m/FDFML/
+  notes: Download frames/ (or videos/) and point the folder ingester at them. Link liveness unverified.
+verification:
+  date: 2026-09-28
+  level: READ (GitHub README); size and link liveness UNVERIFIED

@@ -1,0 +1,26 @@
+name: fathomnet
+title: FathomNet Database (MBARI)
+homepage: https://www.fathomnet.org
+license_id: unknown          # mixed per upload: CC0 / CC-BY / CC-BY-NC / CC-BY-NC-ND; resolved per image
+accept_id: fathomnet-tou
+ml_training_clause: true
+license_note: >
+  Per-upload licenses (images: CC0, CC-BY, CC-BY-NC or CC-BY-NC-ND; annotations: CC0, CC-BY or
+  CC-BY-NC). The Terms of Use state that all visual content "may be used for the training and
+  development of machine learning algorithms"; competition terms add "for commercial, academic,
+  and government purposes". Images must NOT be redistributed (no re-hosting, no published crops).
+  Read https://www.fathomnet.org/terms before accepting.
+attribution: FathomNet / Monterey Bay Aquarium Research Institute (MBARI)
+citation: >
+  Katija, K. et al. FathomNet: A global image database for enabling artificial intelligence in
+  the ocean. Scientific Reports 12, 15914 (2022). doi:10.1038/s41598-022-19939-2
+access:
+  method: api
+  client: pip install fathomnet   # fathomnet-py (MIT)
+  api_base: https://database.fathomnet.org/api
+  worms_base: https://database.fathomnet.org/worms
+  notes: images are fetched one URL at a time; keep workers <= 5 with backoff
+verification:
+  date: 2026-09-28
+  client_and_api: READ (fathomnet-py 1.10.1 source from PyPI)
+  terms_clause: SEARCH (fathomnet.org blocked from the build sandbox) + READ (competition READMEs)

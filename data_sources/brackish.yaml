@@ -1,0 +1,21 @@
+name: brackish
+title: The Brackish Dataset (Aalborg University)
+homepage: https://www.kaggle.com/datasets/aalborguniversity/brackish-dataset
+license_id: CC-BY-SA-4.0
+accept_id: CC-BY-SA-4.0
+license_note: >
+  CONFLICTING reports: Kaggle original CC BY-SA 4.0, Roboflow mirror CC BY 4.0, BrackishMOT
+  CC BY-NC-SA 4.0 (all secondary). Treated as CC BY-SA 4.0 (share-alike) until you confirm on the
+  Kaggle page. Used locally; never redistributed.
+attribution: Pedersen, M. et al., Aalborg University (Brackish Dataset)
+citation: >
+  Pedersen, M., Haurum, J.B., Gade, R., Moeslund, T.B. Detection of Marine Animals in a New
+  Underwater Dataset with Varying Visibility. CVPR Workshops 2019.
+access:
+  method: manual
+  notes: >
+    Requires a Kaggle account (kaggle datasets download -d aalborguniversity/brackish-dataset).
+    Point the ingester at the extracted folder; COCO JSON and YOLO label layouts are supported.
+verification:
+  date: 2026-09-28
+  level: secondary only

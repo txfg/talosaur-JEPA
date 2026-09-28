@@ -1,0 +1,18 @@
+name: kakadu
+title: Kakadu freshwater fish (KakaduFishAI)
+homepage: https://zenodo.org/record/7250921
+license_id: CC-BY-4.0
+accept_id: CC-BY-4.0
+license_note: '"The training dataset and model are licensed with ... CC BY 4.0" (KakaduFishAI README).'
+attribution: KakaduFishAI dataset authors (see the GitHub repository ajansenn/KakaduFishAI)
+citation: See https://github.com/ajansenn/KakaduFishAI for the citation.
+access:
+  method: zenodo
+  record: 7250921
+  notes: >
+    The fetcher lists the record's files through the Zenodo REST API
+    (https://zenodo.org/api/records/7250921) and verifies Zenodo's md5 checksums. If the record
+    layout differs from what the ingester expects, download manually and use `--from-dir`.
+verification:
+  date: 2026-09-28
+  level: READ (KakaduFishAI GitHub README); Zenodo host blocked from the build sandbox

@@ -1,0 +1,9 @@
+name: own
+title: Talosaur pool / lake dives (own footage)
+homepage: ''
+license_id: own
+accept_id: own
+license_note: Your own footage.
+attribution: Talosaur project
+access:
+  method: folder

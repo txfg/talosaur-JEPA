@@ -1,0 +1,16 @@
+name: onc
+title: Ocean Networks Canada (Oceans 3.0 / SeaTube), ONC-owned devices only
+homepage: https://data.oceannetworks.ca/SeaTube
+license_id: CC-BY-4.0
+accept_id: CC-BY-4.0
+license_note: >
+  ONC-owned data are CC BY 4.0. Data owned or co-owned by partners may be CC-BY-NC or more
+  restrictive: check each device's license before downloading and only ingest CC BY devices.
+attribution: Ocean Networks Canada
+citation: See https://www.oceannetworks.ca/data/data-policy/
+access:
+  method: manual
+  notes: Download video with the `onc` client (free token) or SeaTube, then use the folder ingester.
+verification:
+  date: 2026-09-28
+  level: SEARCH

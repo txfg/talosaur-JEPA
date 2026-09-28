@@ -1,0 +1,16 @@
+name: river_herring
+title: MIT Sea Grant River Herring (LILA BC)
+homepage: https://lila.science/datasets/mit-sea-grant-river-herring/
+license_id: CDLA-Permissive-1.0
+accept_id: CDLA-Permissive-1.0
+license_note: Community Data License Agreement - Permissive 1.0 (per LILA; verified by search only).
+attribution: MIT Sea Grant; hosted by LILA BC
+citation: See the LILA dataset page for the citation.
+access:
+  method: coco_camera_traps
+  notes: >
+    Take the metadata (COCO Camera Traps JSON) and image base URL from the LILA page. The
+    ingester reads the JSON; empty-labelled frames become fish/no-fish negatives.
+verification:
+  date: 2026-09-28
+  level: SEARCH + secondary

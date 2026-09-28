@@ -1,0 +1,22 @@
+name: noaa_oer
+title: NOAA Ocean Exploration video (Okeanos Explorer "EX" cruises)
+homepage: https://www.ncei.noaa.gov/access/ocean-exploration/video/
+license_id: public-domain-us-gov
+accept_id: noaa-public-domain
+ml_training_clause: false
+license_note: >
+  "All video on the video portal is in the public domain" (credit "NOAA Ocean Exploration").
+  Items captioned "copyright" and non-NOAA footage (e.g. E/V Nautilus, Ocean Exploration Trust)
+  are NOT covered; the fetcher only accepts files whose names start with an EX cruise id.
+attribution: NOAA Ocean Exploration
+citation: NOAA Office of Ocean Exploration and Research, Okeanos Explorer ROV dive video (NCEI archive).
+access:
+  method: manifest
+  notes: >
+    No bulk API was found. Export segment URLs from the Video Portal (low-resolution H.264 files
+    download directly; full-resolution ProRes is ordered and delivered by expiring e-mail links)
+    into a CSV with a `url` column, then run the fetcher on that CSV.
+  contact: oer.video@noaa.gov
+verification:
+  date: 2026-09-28
+  level: SEARCH (NOAA hosts blocked from the build sandbox); EX1708 frames READ via FathomNet

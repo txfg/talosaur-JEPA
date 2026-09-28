@@ -1,0 +1,10 @@
+# Tiny end-to-end run on procedural data: fetch synthetic, then build.
+name: synthetic_debug
+root: data
+sources: [synthetic]
+workers: 2
+dedup: {enabled: true}
+empty_water: {enabled: true, keep_frac: {default: 0.3}}
+val_frac: 0.15
+test_frac: 0.2
+seed: 0

@@ -1,0 +1,5 @@
+url,dive,notes
+# One row per video segment exported from https://www.ncei.noaa.gov/access/ocean-exploration/video/
+# Paste the direct download links of the low-resolution H.264 files (or local paths to ordered full-res files).
+# Only files whose names start with an Okeanos Explorer cruise id (EX + 4 digits) are accepted.
+# Lines starting with '#' are ignored.

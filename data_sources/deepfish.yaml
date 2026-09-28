@@ -1,0 +1,28 @@
+name: deepfish
+title: DeepFish (James Cook University)
+homepage: https://alzayats.github.io/DeepFish/
+license_id: CC-BY-4.0
+accept_id: CC-BY-4.0
+license_note: 'Project page footer: "Dataset: CC BY 4.0 · Code: MIT · James Cook University".'
+attribution: Saleh, A. et al., James Cook University (DeepFish)
+citation: >
+  Saleh, A., Laradji, I.H., Konovalov, D.A., Bradley, M., Vazquez, D., Sheaves, M. A realistic
+  fish-habitat dataset to evaluate algorithms for underwater visual analysis. Scientific Reports
+  10, 14671 (2020). doi:10.1038/s41598-020-71639-x
+access:
+  method: archive
+  file: DeepFish.tar
+  size: 7.1 GB
+  sha256: 8acabb8a314fa8eb45fa9cc6829c84bdc127b1f8f605f2e152304e98b6dbb46c
+  urls:
+    # Mirror named in the DeepFish README (hf download Alzayats/DeepFish DeepFish.tar --repo-type dataset).
+    # The resolve URL below follows Hugging Face's standard dataset file URL scheme.
+    - https://huggingface.co/datasets/Alzayats/DeepFish/resolve/main/DeepFish.tar
+    - http://data.qld.edu.au/public/Q5842/2020-AlzayatSaleh-00e364223a600e83bd9c3f5bcd91045-DeepFish/DeepFish.tar
+  layout: >
+    Classification/{train,val,test}.csv (ID, labels) with images at Classification/<ID>.jpg;
+    Segmentation/{split}.csv with images/<ID>.jpg and masks/<ID>.png;
+    Localization/{split}.csv (ID, labels, counts) with images/ and point masks/.
+verification:
+  date: 2026-09-28
+  level: READ (GitHub README + project page source + dataset loader code)
