@@ -131,10 +131,12 @@ class Guidance:
         if not track.active:
             self.last_xy = None
         heading = None if self.nav is None else self.nav.heading(t)
-        detected = target.found and (frame_prob >= c.fsm.frame_on or target.peak >= c.fsm.heat_on)
-        self.search.observe(t, self.nav, detected, self.controller.last.surge, heading, searching=choosing)
         release = enc.leave_reason(t) if self.fsm.state in ENGAGED else None
         events = self.fsm.update(t, frame_prob, target, track, release=release)
+        # a find for the search planner: the state machine's evidence (acquire_n of acquire_m frames),
+        # so single-frame specks of marine snow do not count
+        found = st0 == State.SEARCH and self.fsm.state == State.ACQUIRE
+        self.search.observe(t, self.nav, found, self.controller.last.surge, heading, searching=choosing)
 
         summary = None
         for ev in events:

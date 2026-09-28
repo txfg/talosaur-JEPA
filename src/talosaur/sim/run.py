@@ -39,8 +39,12 @@ def run_episode(
     good_range_m: float = 3.0,
     min_good_s: float = 3.0,
     trace_every_s: float = 0.0,
+    telemetry_path: str | Path | None = None,
 ) -> dict:
+    """``telemetry_path``: also write the guidance telemetry as JSONL, like the onboard app's log
+    (for ``python -m talosaur.onboard.dive_report``)."""
     dt = 1.0 / fps
+    tele_f = open(telemetry_path, "w") if telemetry_path else None
     good: dict[int, float] = defaultdict(float)
     seen: set[int] = set()
     states: Counter = Counter()
@@ -59,6 +63,8 @@ def run_episode(
         frame, heat, emb, tok, visible = camera.render(vehicle, world, light)
         nav = vehicle.nav(t) if use_nav else None
         cmd, tele, _ = guidance.step(t, frame, heat, emb, tok, nav=nav)
+        if tele_f:
+            tele_f.write(json.dumps({"kind": "guidance", **tele}) + "\n")
         vehicle.step(cmd, dt)
         light = 0.0 if cmd.light is None else float(cmd.light)
         light_s += light * dt
@@ -86,6 +92,10 @@ def run_episode(
     last = guidance.close(t)
     if last:
         encounters.append(last)
+    if tele_f:
+        if last:
+            tele_f.write(json.dumps({"kind": "encounter", **last}) + "\n")
+        tele_f.close()
     hours = duration_s / 3600.0
     documented = [i for i, s in good.items() if s >= min_good_s]
     species = Counter(world.cfg.species[world.sp[i]].name for i in documented)
@@ -138,6 +148,9 @@ def main(argv=None) -> int:
         "--set", nargs="*", default=[], help="override config values, e.g. guidance.encounter.max_s=30"
     )
     ap.add_argument("--out", default=None, help="write results (with traces) as JSON")
+    ap.add_argument(
+        "--telemetry", default=None, help="write each run's guidance telemetry to DIR/seed<N>.jsonl"
+    )
     a = ap.parse_args(argv)
     import yaml
 
@@ -152,7 +165,13 @@ def main(argv=None) -> int:
     results = []
     for seed in a.seeds:
         g, w, v, c = build(cfg, a.start_hour, seed)
-        r = run_episode(g, w, v, c, a.hours * 3600, a.fps, use_nav=not a.no_nav, trace_every_s=10.0)
+        tele = None
+        if a.telemetry:
+            Path(a.telemetry).mkdir(parents=True, exist_ok=True)
+            tele = Path(a.telemetry) / f"seed{seed}.jsonl"
+        r = run_episode(
+            g, w, v, c, a.hours * 3600, a.fps, use_nav=not a.no_nav, trace_every_s=10.0, telemetry_path=tele
+        )
         results.append(r)
         print(json.dumps({"seed": seed, **{k: val for k, val in r.items() if k != "trace"}}))
     if a.out:

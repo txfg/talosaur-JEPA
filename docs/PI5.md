@@ -481,5 +481,14 @@ with replay on labelled clips, or with `scripts/eval.py`.
 - `free -m` output with the app idle in SEARCH, and while recording.
 - One short pool clip with the toy or trained model, plus its `logs/guidance.jsonl` and `logs/encounters.jsonl`. Replay it on the desktop to tune.
 - From the first dives: `logs/guidance.jsonl` and `logs/encounters.jsonl` with navigation input on.
-  The detections per depth band and the encounter values replace the simulator's assumptions
-  (docs/SEARCH.md §7).
+  The finds per depth band and the encounter values replace the simulator's assumptions
+  (docs/SEARCH.md §7). Summarise a dive with:
+
+  ```bash
+  python -m talosaur.onboard.dive_report logs/guidance.jsonl logs/encounters.jsonl \
+      --config configs/onboard/pi5.yaml --out reports/dives/first_dive.md
+  ```
+
+  The report gives the time per state, the search modes, finds per minute of search in each depth
+  band, and each encounter's reason and duration. It also shows the appearance similarities (for
+  `same_sim`) and the lamp's decisions with the ambient brightness it measured (for `dark_luma`).

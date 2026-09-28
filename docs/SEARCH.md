@@ -27,12 +27,16 @@ Everything is built from what stays reliable underwater: **depth** (pressure sen
    before choosing again.
    - Well-performing bands get most of the time, but others are still checked now and then.
    - Old evidence fades (`halflife_s`, 20 min), because layers move.
-   - Detections count once per animal (`onset_gap_s`), not once per frame.
+   - A find is a detection the state machine accepts (`fsm.acquire_n` of `acquire_m` frames), so
+     single-frame specks of marine snow do not count. Finds closer together than `onset_gap_s`
+     count once.
    - Only search time counts. Time spent filming is not, so a band where animals are filmed for
      long is not mistaken for a band where they are hard to find.
 3. **Time-of-day prior** (`diel_prior`):
-   - Around sunset and sunrise, bands in the migration corridor (100–200 m by default) start with
-     3× the prior rate.
+   - While the migrators cross the corridor (100–200 m by default), its bands start with 3× the
+     prior rate: from 1 h before to 1.5 h after sunset, and from 2.5 h before to 0.5 h after
+     sunrise (`dusk_h`, `dawn_h`). In the Gulf the ascent starts about an hour before sunset and
+     the descent about two hours before sunrise (§1).
    - At night, bands near `night_depth_m` are favoured.
    - By day, no prior.
    - Set `sunrise_h` / `sunset_h` to the times of sunrise and sunset at the dive site on the

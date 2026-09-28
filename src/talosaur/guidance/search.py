@@ -53,6 +53,10 @@ class SearchConfig:
     diel_prior: bool = True  # favour the migration corridor at dusk / dawn, shallow bands at night
     sunrise_h: float = 6.5  # at the dive site, in hours on the Pi's clock
     sunset_h: float = 18.5
+    # when migrators cross the corridor, in hours relative to sunset / sunrise: the ascent starts
+    # about an hour before sunset, the descent about two hours before sunrise (docs/SEARCH.md §1)
+    dusk_h: tuple[float, float] = (-1.0, 1.5)
+    dawn_h: tuple[float, float] = (-2.5, 0.5)
     corridor_m: tuple[float, float] = (100.0, 200.0)
     night_depth_m: float = 60.0  # where the migrators are expected at night
     # horizontal
@@ -94,6 +98,7 @@ class SearchPlanner:
         self.depth_lo, self.depth_hi = c.min_depth_m, c.max_depth_m  # the part the vehicle can reach
         self._goal_best = math.inf  # profile progress: closest approach to the current goal ...
         self._goal_t = 0.0  # ... and when it last improved
+        self._depth_cmd_t: float | None = None  # last time the planner steered depth (SEARCH only)
         self.floor_m: float | None = None  # deepest depth allowed by the altimeter, if any
         self.mode = "extensive"
         self.last_find = -1e9
@@ -176,9 +181,11 @@ class SearchPlanner:
         w = np.ones(len(self.bands))
         if not c.diel_prior:
             return w
-        near = lambda h0: abs(((hour - h0) + 12) % 24 - 12) <= 1.5  # noqa: E731
+        rel = lambda h0: ((hour - h0) + 12) % 24 - 12  # noqa: E731 - hours after h0, in [-12, 12)
         lo, hi = c.corridor_m
-        if near(c.sunset_h) or near(c.sunrise_h):  # migrators crossing the corridor
+        dusk = c.dusk_h[0] <= rel(c.sunset_h) <= c.dusk_h[1]
+        dawn = c.dawn_h[0] <= rel(c.sunrise_h) <= c.dawn_h[1]
+        if dusk or dawn:  # migrators crossing the corridor
             w[(self.bands >= lo) & (self.bands <= hi)] = 3.0
         elif not (c.sunrise_h <= hour < c.sunset_h):  # night: migrators shallow
             w *= np.exp(-0.5 * ((self.bands - c.night_depth_m) / 40.0) ** 2) * 2.0 + 0.5
@@ -214,6 +221,9 @@ class SearchPlanner:
         if depth is None:
             return None
         target = None
+        if self._depth_cmd_t is None or t - self._depth_cmd_t > 2.0:
+            self._goal_best = math.inf  # back in control (after filming): restart the progress check
+        self._depth_cmd_t = t
         if self.profile:  # one sweep: down to the bottom of the range, then up to the top
             goal = c.max_depth_m if self.profile_dir > 0 else c.min_depth_m
             dist = abs(depth - goal)

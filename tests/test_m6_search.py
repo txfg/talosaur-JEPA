@@ -11,6 +11,8 @@ from talosaur.guidance.lights import LightPolicy, LightsConfig
 from talosaur.guidance.nav import NavState
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
 from talosaur.guidance.search import SearchConfig, SearchPlanner
+from talosaur.onboard.dive_report import load as load_logs
+from talosaur.onboard.dive_report import summarise as dive_report
 from talosaur.sim.camera import SimCamera
 from talosaur.sim.run import build, run_episode
 from talosaur.sim.vehicle import Vehicle
@@ -59,6 +61,22 @@ def test_profile_finishes_when_the_bottom_is_shallower_than_the_range():
         depth = min(45.0, depth + float(np.clip(cmd.depth_m - depth, -0.15, 0.15)))  # a lake 45 m deep
     assert not p.profile and p.depth_hi == pytest.approx(45.0)
     assert set(targets[-1000:]) <= {25.0, 35.0, 45.0}  # only bands it can reach
+
+
+def test_time_spent_filming_does_not_count_as_a_stalled_profile():
+    p = SearchPlanner(SearchConfig(min_depth_m=20, max_depth_m=200, stall_s=30))
+    depth, t = 50.0, 0.0
+    for k in range(2000):
+        t += 0.5
+        filming = 100 <= k < 400  # 150 s on an animal at 80 m: the planner is not in control
+        p.observe(t, _nav(t, depth), False, 0.3, 0.0, searching=not filming)
+        if filming:
+            continue
+        cmd = p.command(t, _nav(t, depth))
+        depth += float(np.clip(cmd.depth_m - depth, -0.15, 0.15))
+        if depth >= 190:
+            break
+    assert depth >= 190 and p.depth_hi == 200.0  # it went on down to the bottom of the range
 
 
 def test_keeps_off_the_bottom_with_an_altimeter():
@@ -114,6 +132,9 @@ def test_diel_prior_prefers_the_corridor_at_dusk_and_shallow_water_at_night():
     dusk, night, noon = p._diel_prior(18.5), p._diel_prior(23.0), p._diel_prior(12.0)
     b = p.bands
     assert dusk[(b >= 100) & (b <= 200)].mean() > 2 * dusk[b < 100].mean()
+    corridor = (b >= 100) & (b <= 200)
+    assert p._diel_prior(4.5)[corridor].mean() > 2.0  # the descent starts ~2 h before sunrise ...
+    assert p._diel_prior(7.5)[corridor].mean() < 2.0  # ... and is over an hour after it
     assert night[np.argmin(abs(b - 60))] > 2 * night[np.argmin(abs(b - 190))]
     assert np.allclose(noon, 1.0)
 
@@ -140,6 +161,24 @@ def test_new_legs_avoid_water_already_searched():
         p.observe(t, _nav(t, heading=0.0), False, 0.35, 0.0)
     p._new_leg(t, heading=180.0)  # coming back south: do not retrace the northward track
     assert abs(((p.leg_heading - 180.0) + 180) % 360 - 180) >= 45
+
+
+def test_marine_snow_does_not_count_as_a_find_but_an_animal_does():
+    g = Guidance(GuidanceConfig())
+    empty = np.full((7, 13), -4.0, np.float32)
+    speck = empty.copy()
+    speck[2, 3] = 2.0  # one bright patch in one frame
+    t = 0.0
+    for k in range(100):  # 20 s with a speck every 5th frame
+        t += 0.2
+        g.step(t, np.array([-4.0]), speck if k % 5 == 0 else empty, nav=_nav(t, depth=55.0))
+    assert g.search.events.sum() == 0.0 and g.search.mode == "extensive"
+    fish = empty.copy()
+    fish[3, 6] = fish[3, 7] = 3.0
+    for _ in range(10):  # an animal in view for 2 s
+        t += 0.2
+        g.step(t, np.array([2.0]), fish, nav=_nav(t, depth=55.0))
+    assert g.search.events.sum() == pytest.approx(1.0, abs=0.01) and g.search.mode == "intensive"
 
 
 def test_search_telemetry_and_setpoints_in_the_pipeline():
@@ -255,9 +294,14 @@ def test_camera_sees_an_animal_straight_ahead():
 
 def test_closed_loop_episode_runs_and_scores(tmp_path):
     g, w, v, c = build({}, start_hour=22.0, seed=0, world_overrides={"size_m": 300.0, "layer_density": 0.01})
-    r = run_episode(g, w, v, c, 300.0, fps=5.0, trace_every_s=30.0)
+    tele = tmp_path / "tele.jsonl"
+    r = run_episode(g, w, v, c, 300.0, fps=5.0, trace_every_s=30.0, telemetry_path=tele)
     for key in ("value_per_h", "animals_per_h", "detections_per_h", "state_share", "depth_share", "trace"):
         assert key in r
     assert r["distance_km"] > 0 and len(r["trace"]) == 10
     assert sum(r["state_share"].values()) == pytest.approx(1.0, abs=0.01)
     json.dumps(r)
+    frames, encounters = load_logs([tele])  # the dive report reads simulator telemetry like a dive log
+    assert len(frames) == 1500 and len(encounters) == r["encounters"]
+    text = dive_report(frames, encounters)
+    assert "| depth band |" in text and "## Encounters" in text and "Lamp: mean level" in text

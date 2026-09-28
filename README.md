@@ -271,7 +271,7 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 9. **Recording** runs continuously for the whole run, in 5-minute crash-safe segments. A low-disk guard only ever deletes segments without animals.
 10. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge; depth and heading come back over UDP. The autopilot choice is still open.
 
-Three tools support it:
+Four tools support it:
 - **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.
 - **Replay** (`scripts/replay.py`): runs the identical pipeline on recorded video at the Pi's measured frame rate and writes an annotated video, telemetry and an encounter log. This is how guidance, including the "same animal" similarity threshold, is tuned without the vehicle.
 - **Simulator** (`python -m talosaur.sim.run`): runs the same guidance code in closed loop against a caricature of the twilight zone. The caricature has drifting patches of animals, vertical migration, and animals that avoid the vehicle and its lights. Use it to compare search and filming settings before a dive, not to predict what a dive will find ([`docs/SEARCH.md`](docs/SEARCH.md) §7):
@@ -279,7 +279,9 @@ Three tools support it:
   ```bash
   python -m talosaur.sim.run --hours 2 --start-hour 18.5 --seeds 0 1 2 \
       --set guidance.lights.search=0.5 --out reports/sim/dusk_lights.json
+  python scripts/sim_compare.py --out reports/sim/compare.jsonl     # the comparison in docs/SEARCH.md §7
   ```
+- **Dive report** (`python -m talosaur.onboard.dive_report logs/guidance.jsonl logs/encounters.jsonl`): summarises a dive's logs. It reports finds per depth band, why and after how long each animal was left, appearance similarities and lamp decisions. These are the numbers that tune the search, the leave rule, `same_sim` and `dark_luma` from real dives.
 
 Everything onboard is torch-free, and CI checks this on Python 3.13, the version Raspberry Pi OS Trixie ships. The picamera2 code is tested against a fake camera that follows the picamera2 0.3.37 API. **Nothing has run on a real Pi yet**: `docs/PI5.md` §14 lists what still needs hardware and §15 what to send back.
 

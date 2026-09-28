@@ -29,6 +29,7 @@ ONBOARD_MODULES = [
     "talosaur.onboard.app",
     "talosaur.onboard.benchmark",
     "talosaur.onboard.camera",
+    "talosaur.onboard.dive_report",
     "talosaur.onboard.nav_input",
     "talosaur.onboard.recorder",
     "talosaur.onboard.runtime",
