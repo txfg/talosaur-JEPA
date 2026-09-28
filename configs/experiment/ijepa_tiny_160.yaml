@@ -1,0 +1,13 @@
+# @package _global_
+# ViT-Ti/16 pretrained directly at 160 px (cheaper; closer to the Pi input size).
+defaults:
+  - override /model: vit_tiny
+  - override /data: underwater_v1
+run_name: ijepa_tiny_160_${degrade.mode}_s${seed}
+train:
+  batch_size: 384
+  size: [160, 160]
+probe:
+  kind: index
+  index: ${data.index}
+  size: [160, 160]

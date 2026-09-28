@@ -9,7 +9,7 @@ Self-supervised vision for **Talosaur**, a low-cost AUV that finds, follows, and
 |---|---|
 | M0 scaffold (package, CI, synthetic data) | done |
 | M1 data pipeline | done (run it on your machine) |
-| M2 I-JEPA pretraining | planned |
+| M2 I-JEPA pretraining | done (run it on your GPUs) |
 | M3 probes, heads, and condition slices | planned |
 | M4 baselines | planned |
 | M5 ONNX export and int8 | planned |
@@ -105,6 +105,70 @@ What curation does:
 - **Empty open water.** Unlabelled training frames with no structure are downsampled, keeping more of them in murky or dark conditions, where faint animals hide.
 - **Splits** are grouped by dive, video, habitat, or deployment.
 - **Sampling weights** balance the light × clarity buckets, with a cap on each source's share.
+
+## M2: I-JEPA pretraining
+
+Hardware assumed: **4× RTX 2080 Super (8 GB), 112 cores**. Turing has no bf16 hardware, so the engine uses **fp16 autocast + GradScaler**. All configs live in `configs/` (Hydra); any value can be overridden on the command line.
+
+**0. Smoke test (CPU, about 1 minute, no data needed)**
+
+```bash
+python scripts/train.py experiment=debug_cpu
+```
+
+**1. Measure your real throughput first.** This replaces the estimates in `docs/PLAN.md` §4.7.
+
+```bash
+python scripts/bench_train_throughput.py --model vit_tiny  --size 224 --batch-sizes 128 192 256 --gpus 4
+python scripts/bench_train_throughput.py --model vit_small --size 224 --batch-sizes 64 96 128 --gpus 4
+python scripts/bench_train_throughput.py --index data/index/underwater_v1.parquet --root data --workers 24   # + data loading
+```
+
+Use the largest batch that doesn't OOM as `train.batch_size` (per GPU).
+
+**2. Preview the underwater degradation on your images**
+
+```bash
+python scripts/viz_degrade.py --index data/index/underwater_v1.parquet --root data --out degrade.png
+```
+
+**3. Train.** Either one run on all 4 GPUs, or the first ablation round with one run per GPU:
+
+```bash
+torchrun --standalone --nproc_per_node=4 scripts/train.py experiment=ijepa_tiny_224 degrade=context_only
+EXP=ijepa_tiny_224 bash scripts/launch_ablation.sh      # E1 none | E2 context_only | E3 shared | E5 ImageNet init
+torchrun --standalone --nproc_per_node=4 scripts/train.py experiment=ijepa_small_224 degrade=<best>   # E6
+python scripts/train.py experiment=ijepa_tiny_multires degrade=<best>                              # E4
+```
+
+Each run writes these files to `runs/<run_name>/`:
+- `metrics.jsonl`, and `tb/` for TensorBoard;
+- `latest.pt`, which gives automatic resume: re-running the same command continues;
+- `ckpt_epXXXX.pt`;
+- `encoder_target.pt`, the file evaluation and export use;
+- `config.yaml` and `env.json`, recording the resolved config, git SHA, and versions.
+
+What to watch in TensorBoard (`tensorboard --logdir runs`):
+
+| Metric | Healthy | Worry if |
+|---|---|---|
+| `train/loss` | falls, then flattens | NaN, or `train/nonfinite_losses` > 0 repeatedly |
+| `target/patch_rankme`, `target/patch_std_norm` | stay well above ~10% of the embedding dim / ~0.3 | drop towards 0 (collapse; a warning is logged) |
+| `probe/target/frame_auroc` (+ `_dark`, `_murky`, `_clear`) | rises over epochs | flat at ~0.5 |
+| `probe/target/patch_auroc`, `probe/target/centroid_err_deg_median` | AUROC up, error (degrees) down | not improving while the loss falls |
+| `train/img_per_s`, `train/data_time_frac` | stable; data time < 10% | data time high: raise `train.num_workers` |
+
+Implementation details:
+- **Masking follows the official I-JEPA configs**: 4 targets at scale 0.15–0.2 and aspect 0.75–1.5; 1 context block at 0.85–1.0; `min_keep` 10.
+- **Masking fixes the reference collator's edge bias.** With the official behaviour at 224 px, 14% of patches (the whole last row and column) are never targets. Context coverage also drops from 79% at the top-left to 2% at the bottom-right. Set `mask.official_compat=true` to reproduce the official behaviour for comparison.
+- **Learning rate:** peak lr = `optim.lr` × global batch / 2048. Warmup is 10 epochs. Weight decay rises 0.04 → 0.4 and EMA momentum 0.996 → 1.0, as in I-JEPA.
+- **Degradation modes:**
+  - `none` is the baseline;
+  - `shared` degrades context and target identically (plain augmentation);
+  - `context_only` degrades the context and keeps the target clean (the robustness objective). In this mode both the context and target encoders are probed;
+  - `independent` degrades them separately.
+
+**Send me back** `metrics.jsonl`, `config.yaml`, and `env.json` from each run, plus the throughput JSON. That's enough for me to tune the next round.
 
 ## Repository layout
 

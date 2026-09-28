@@ -1,0 +1,12 @@
+# @package _global_
+# E6: ViT-S/16 @224 for the size comparison.
+defaults:
+  - override /model: vit_small
+  - override /data: underwater_v1
+run_name: ijepa_small_224_${degrade.mode}_s${seed}
+train:
+  batch_size: 112            # per GPU on 8 GB; enable model.grad_checkpointing=true to go higher
+  size: [224, 224]
+probe:
+  kind: index
+  index: ${data.index}

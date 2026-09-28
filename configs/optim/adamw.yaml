@@ -1,0 +1,10 @@
+lr: 1.0e-3                   # peak lr at batch_ref, scaled linearly to the global batch
+batch_ref: 2048              # (official I-JEPA ViT-H: lr 1e-3 at batch 2048)
+scale_lr: true
+start_lr_frac: 0.2           # warmup starts at 0.2 x peak (official: 2e-4 -> 1e-3)
+final_lr: 1.0e-6
+warmup_epochs: 10            # official: 40 of 300 epochs
+wd_start: 0.04               # weight decay rises along a cosine 0.04 -> 0.4 (official)
+wd_end: 0.4
+betas: [0.9, 0.999]
+eps: 1.0e-8

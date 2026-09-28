@@ -1,0 +1,9 @@
+# Underwater degradation mode: none
+#   none         - no degradation (baseline)
+#   shared       - same degraded image for context and target (plain augmentation)
+#   context_only - degraded context, clean target: predict clean-scene features (robustness objective)
+#   independent  - independent degradations for context and target
+mode: none
+p: 0.8                       # probability an image is degraded
+severity: [0.2, 1.0]
+op_p: null                   # per-op probabilities override, e.g. {particles: 0.8, low_light: 0.6}

@@ -1,0 +1,11 @@
+name: vit_small              # 384-d, 12 blocks, 6 heads, 21.7 M params
+init: scratch
+timm_name: vit_small_patch16_224.augreg_in21k_ft_in1k
+drop_path_rate: 0.0
+attn_impl: sdpa
+grad_checkpointing: false    # turn on if 8 GB is tight at your batch size
+predictor:
+  dim: 192
+  depth: 6
+  heads: 6
+  mlp_ratio: 4.0

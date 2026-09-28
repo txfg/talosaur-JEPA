@@ -1,0 +1,17 @@
+# @package _global_
+# E5: start from ImageNet ViT-Ti (timm AugReg, Apache-2.0; note ImageNet's own terms) and continue
+# I-JEPA on underwater data. AugReg weights expect mean = std = 0.5.
+defaults:
+  - override /model: vit_tiny
+  - override /data: underwater_v1
+run_name: ijepa_tiny_224_imagenet_${degrade.mode}_s${seed}
+model:
+  init: imagenet
+data:
+  mean: [0.5, 0.5, 0.5]
+  std: [0.5, 0.5, 0.5]
+optim:
+  warmup_epochs: 5
+probe:
+  kind: index
+  index: ${data.index}

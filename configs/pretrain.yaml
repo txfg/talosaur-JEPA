@@ -1,0 +1,76 @@
+# Root config for JEPA pretraining (Hydra). Examples:
+#   python scripts/train.py experiment=debug_cpu                        # 1-minute CPU smoke test
+#   torchrun --standalone --nproc_per_node=4 scripts/train.py experiment=ijepa_tiny_224
+#   python scripts/train.py experiment=ijepa_tiny_224 degrade=context_only train.batch_size=160
+defaults:
+  - model: vit_tiny
+  - data: synthetic
+  - degrade: none
+  - optim: adamw
+  - _self_
+  - experiment: null
+
+seed: 0
+run_name: ${model.name}_ijepa_${degrade.mode}_s${seed}
+out_dir: runs/${run_name}
+
+ssl:
+  name: ijepa
+  loss: smooth_l1            # I-JEPA: smooth L1 on layer-normed target features
+  ema: [0.996, 1.0]          # target-encoder momentum, linear over training
+
+mask:                        # values used by every shipped I-JEPA config
+  enc_scale: [0.85, 1.0]
+  pred_scale: [0.15, 0.2]
+  aspect: [0.75, 1.5]
+  npred: 4
+  min_keep: 10
+  allow_overlap: false
+  official_compat: false     # true = reproduce the reference collator's edge/raster biases
+
+train:
+  epochs: 100
+  batch_size: 192            # per GPU; sized for 8 GB (RTX 2080 Super), ViT-Ti @224, fp16
+  accum: 1
+  size: [224, 224]
+  sizes: null                # e.g. [[128,128],[160,160],[224,224],[112,208]] = one size per batch
+  num_workers: 16            # per GPU
+  amp: fp16                  # Turing has no bf16 hardware; the engine uses fp32 on CPU
+  grad_clip: null
+  log_every: 50
+  monitor_every: 500
+  ckpt_every: 2000
+  save_every_epochs: 10
+  max_steps: null
+  resume: true
+  deterministic: false
+  stop_on_collapse: false
+  device: auto
+
+probe:
+  enabled: true
+  kind: synthetic            # index | synthetic
+  index: null
+  root: ${data.root}
+  size: [224, 224]
+  n_train: 4000
+  n_val: 2000
+  every_epochs: 5
+  workers: 8
+
+logging:
+  tensorboard: true
+  wandb:
+    enabled: false
+    project: talosaur-jepa
+    name: ${run_name}
+
+hydra:
+  run:
+    dir: ${out_dir}
+  sweep:
+    dir: runs/multirun
+    subdir: ${run_name}
+  job:
+    chdir: false
+  output_subdir: hydra

@@ -255,17 +255,19 @@ Encoder cost:
 
 I-JEPA training costs roughly 4.6 GFLOPs per image for Ti@160, 9.5 for Ti@224, and 25 for S@224 (forward + backward, including the EMA target and the 4-target predictor).
 
-For 100 epochs over ~400k images on **one** RTX 2080, assuming 4–10 effective TFLOPS (10–25% of the fp16 tensor peak, typical for small ViTs):
+Your hardware is **4× RTX 2080 Super (8 GB), 112 cores, ample storage**. Per 2080 Super, the fp16 tensor peak with fp32 accumulation is about 45 TFLOPS; assuming 10–25% of that is achieved gives 4.5–11 effective TFLOPS. For 100 epochs over ~400k images:
 
-| Run | Estimated time |
-|---|---|
-| Ti@160 | 5–13 h |
-| Ti@224 | 11–26 h |
-| S@224 | 28–70 h |
+| Run | 1 GPU | 4 GPUs (DDP, ~3.5×) |
+|---|---|---|
+| Ti@160 | 5–11 h | 1.5–3.5 h |
+| Ti@224 | 10–24 h | 3–7 h |
+| S@224 | 25–62 h | 7–18 h |
 
-With multiple GPUs, divide by the GPU count.
+The core grid (E1–E6) takes about **1–2 days**:
+- Round 1: E1, E2, E3 and E5 in parallel, one GPU each (`scripts/launch_ablation.sh`).
+- Round 2: E4 plus E6 on the remaining GPUs.
 
-The data loader has to deliver ~400–2,000 img/s. Hence pre-resized JPEGs, degradation on the GPU, and a throughput benchmark as step 1 of M2. The uncertainty on these numbers is about 2×.
+With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/bench_train_throughput.py` measures the real numbers on the first day. The uncertainty on these estimates is about 2×.
 
 **Storage (estimate).**
 - Raw video is processed as a stream (download → extract → delete), but plan **≥ 300–500 GB of scratch space** if you process many NOAA dives.

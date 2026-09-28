@@ -1,0 +1,33 @@
+# @package _global_
+# One-minute CPU smoke test on procedural data (no downloads, no GPU).
+defaults:
+  - override /data: synthetic
+run_name: debug_cpu
+out_dir: runs/debug_cpu
+data:
+  n_images: 64
+model:
+  predictor: {dim: 64, depth: 2, heads: 2}
+train:
+  epochs: 2
+  batch_size: 8
+  size: [64, 64]
+  num_workers: 0
+  log_every: 2
+  monitor_every: 4
+  ckpt_every: 6
+  max_steps: 12
+  device: cpu
+  amp: none
+optim:
+  warmup_epochs: 1
+  scale_lr: false             # tiny batch: use the lr as-is
+  lr: 5.0e-4
+probe:
+  kind: synthetic
+  size: [64, 64]
+  n_train: 48
+  n_val: 32
+  every_epochs: 1
+logging:
+  tensorboard: false

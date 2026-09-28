@@ -1,0 +1,13 @@
+# @package _global_
+# E4: one input size per batch, incl. 16:9 grids, so small / rectangular deploy inputs are in-distribution.
+defaults:
+  - override /model: vit_tiny
+  - override /data: underwater_v1
+run_name: ijepa_tiny_multires_${degrade.mode}_s${seed}
+train:
+  batch_size: 192            # sized for the largest input (224x224)
+  sizes: [[128, 128], [160, 160], [192, 192], [224, 224], [112, 208], [144, 256]]
+probe:
+  kind: index
+  index: ${data.index}
+  size: [160, 160]

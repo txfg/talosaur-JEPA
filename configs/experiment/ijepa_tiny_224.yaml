@@ -1,0 +1,13 @@
+# @package _global_
+# E1-E3: ViT-Ti/16 @224 on the curated pool. Ablate with degrade=none|shared|context_only.
+defaults:
+  - override /model: vit_tiny
+  - override /data: underwater_v1
+run_name: ijepa_tiny_224_${degrade.mode}_s${seed}
+train:
+  epochs: 100
+  batch_size: 192
+  size: [224, 224]
+probe:
+  kind: index
+  index: ${data.index}
