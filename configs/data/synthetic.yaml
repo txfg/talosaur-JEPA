@@ -1,0 +1,5 @@
+kind: synthetic              # procedural scenes, for smoke tests only
+n_images: 512
+root: null
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
