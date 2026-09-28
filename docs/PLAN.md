@@ -10,10 +10,34 @@
 This repo will hold one config-driven pipeline:
 
 1. **Curated underwater dataset.** Frames and stills from verified sources are deduplicated, empty open water is downsampled, and every image is tagged with a light/turbidity bucket. Splits are grouped by dive, video, or deployment. Every image carries its license.
-2. **I-JEPA pretraining of ViT-Tiny/16**, with ViT-Small/16 for comparison, on the 2080s. An optional underwater-degradation module can be switched on per run for ablations. Optional stages: V-JEPA video pretraining, and distillation from DINOv2.
+2. **I-JEPA pretraining of ViT-Tiny/16**, with ViT-Small/16 for comparison, on the 2080s. An optional underwater-degradation module can be switched on per run for ablations. Optional stages: V-JEPA video pretraining, and distillation from DINOv2 or a V-JEPA 2.1 ViT-B teacher.
 3. **Frozen-feature evaluation.** A frame-level "animal present" probe and a per-patch heatmap probe, reported separately on **dark / murky / clear** subsets. Baselines: DINOv2 ViT-S/14, ImageNet ViT-Tiny, and MobileNetV3.
 4. **Deployment.** Encoder and both heads are exported as one ONNX graph, int8 static-quantized with an underwater calibration set, and benchmarked on the Pi 5 with ONNX Runtime and ncnn. The Pi 5 runtime uses no PyTorch.
 5. **Guidance and recording (expansion).** Heatmap → target bearing, elevation, and apparent size → filtered track → yaw/heave/surge commands. A SEARCH → ACQUIRE → TRACK → FILM → LOST state machine decides when to record, so CPU goes to video encoding only when there is something to film.
+
+```mermaid
+flowchart LR
+  subgraph M1["M1 · Data (your training box)"]
+    S1["FathomNet API"] --> CUR
+    S2["NOAA EX video"] --> FX["frame extraction"] --> CUR
+    S3["DeepFish · Kakadu · River Herring<br/>Brackish · OzFish · ONC"] --> CUR
+    S4["Your dives"] --> FX
+    CUR["dedup · empty-water · condition buckets<br/>grouped splits"] --> IDX[("Parquet index + resized JPEGs<br/>license per image")]
+  end
+  subgraph M2["M2 · Pretrain (RTX 2080s, fp16)"]
+    IDX --> IJ["I-JEPA ViT-Ti/16 · ViT-S/16<br/>± underwater degradation"]
+    IJ -.->|optional| VJ["V-JEPA video stage"]
+    TCH["DINOv2 / V-JEPA 2.1-B teacher"] -.->|optional| KD["distill → ViT-Ti"]
+  end
+  subgraph M34["M3–M4 · Evaluate"]
+    IJ --> PR["frame + patch probes<br/>all · dark · murky · clear"]
+    BL["DINOv2-S/14 · IN ViT-Ti · MobileNetV3"] --> PR
+  end
+  subgraph M56["M5–M6 · Raspberry Pi 5"]
+    PR --> EXP["ONNX encoder+heads → int8 / ncnn"]
+    EXP --> RT["camera lores → heatmap → track<br/>yaw/heave/surge · state machine → record"]
+  end
+```
 
 **What I can and can't do from here.** This sandbox has no GPU, no Pi, and its network policy blocks the dataset hosts (FathomNet, NOAA, Hugging Face, and others). I can build and unit-test every stage on CPU using synthetic data and tiny models. You run the real downloads, training, and Pi benchmarks with the scripts and checklists I provide, then send back the reports they generate so I can tune from them.
 
@@ -35,16 +59,17 @@ The robustness question in the brief ("does it still work when dark, murky, lit 
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Mixed precision on 2080s | **fp16 autocast + GradScaler**, not bf16 | Turing (sm_75) has fp16 tensor cores but no bf16 tensor cores. The official I-JEPA configs use bf16, so this is a deliberate deviation. |
-| Attention kernel | PyTorch SDPA (memory-efficient backend); plain matmul path for ONNX export | FlashAttention-2 needs Ampere or newer. |
-| Reference code | **Reimplement I-JEPA** following the paper and the official hyperparameters/collator. Adapt **V-JEPA 2 code (MIT)** with attribution where useful. **Copy no code** from `facebookresearch/ijepa` or `facebookresearch/jepa`. | Both of those repos are **CC BY-NC 4.0** (verified). Copying from them would make this repo non-commercial. The official code is used as a *reference*: a test checks that our mask collator matches the official block-size and keep-count statistics. |
+| Mixed precision on 2080s | **fp16 autocast + GradScaler** (`torch.amp`), not bf16 | Turing (sm_75) has fp16 tensor cores but **no bf16 or TF32**. PyTorch runs bf16 autocast there *silently*, emulated and slower than fp32, and bf16 also disables the memory-efficient attention kernel. The official I-JEPA training code has **only** a bf16 switch, so ours differs on purpose. |
+| Attention kernel | PyTorch SDPA (memory-efficient backend, fp16) for training; plain matmul path for ONNX export | On sm_75 the Flash and cuDNN SDPA backends need sm80+, and so does FlashAttention-2. We don't rely on `torch.compile` either, because Triton officially targets compute capability ≥ 8.0. |
+| PyTorch version | Pin **torch 2.14.0**. Use the default CUDA 13.0 build if `nvidia-smi` shows driver ≥ 580, otherwise the CUDA 12.6 build (driver ≥ 525.60). | Turing is now the oldest architecture CUDA 13 supports. Pinning avoids a surprise drop. |
+| Reference code | **Reimplement I-JEPA** from the paper, the official configs, and the collator behaviour. Adapt **V-JEPA 2 code (MIT)** with attribution where useful. **Copy no code** from `facebookresearch/ijepa` or `facebookresearch/jepa`. | Both of those repos are **CC BY-NC 4.0** (verified). Copying from them would make this repo non-commercial. The official code stays a *reference*: a parity mode reproduces the official mask statistics exactly (§4.1). |
 | Position encoding | Fixed 2-D sin-cos, no CLS token (as in I-JEPA) | One trained encoder can run at 112/160/224 px and at non-square grids without retraining. |
 | Onboard input shape | Square 112/160/224 (the benchmarks you asked for) **plus 16:9 grids**, e.g. 208×112 → 13×7 patches | The camera is 16:9 wide. A square crop throws away ~44% of the horizontal field of view, while 208×112 costs about the same as 160×160 (0.54 vs 0.59 GMACs for ViT-Ti). |
 | Underwater degradation | Batched on the GPU, physically motivated, with modes **off / shared / context_only / independent** | `context_only` (degraded context, clean target) turns augmentation into a robustness objective: predict clean-scene features from a degraded view. It is a clean ablation axis. |
 | Splits | Grouped by dive / video / deployment / site, plus cross-source near-duplicate removal | Frames from one dive in both train and test inflate every metric. FathomNet also hosts NOAA imagery, so the same scene can appear in two sources. |
 | Config & logging | Hydra + YAML; TensorBoard by default, W&B optional; fixed seeds; resumable atomic checkpoints | Ablations become `-m degrade=off,context_only`. |
 | Onboard runtime | numpy + onnxruntime (or ncnn) only; the ISP scales the camera's low-res stream | 1 GB of RAM. PyTorch alone would use a large fraction of it. The ISP does the resize for free. |
-| Recording | Recording is a vision-driven decision (state machine), with a pre-roll buffer | The Pi 5 has no hardware H.264 encoder (to be confirmed, §10), so encoding competes with inference for CPU. |
+| Recording | Recording is a vision-driven decision (state machine), with a pre-roll buffer | **Confirmed:** the Pi 5 has no hardware H.264 encoder. The official BCM2712 docs put software 1080p30 encoding at about 30–40% CPU, and picamera2 switches to a libav (x264) encoder on the Pi 5. Encoding competes with inference for the same four cores. |
 
 ---
 
@@ -52,15 +77,29 @@ The robustness question in the brief ("does it still work when dark, murky, lit 
 
 ### 3.1 Sources
 
-Full verification details, exact access commands, and license quotes are in [`docs/DATASETS.md`](DATASETS.md). Summary:
+Full verification details, exact access commands, and license quotes are in [`docs/DATASETS.md`](DATASETS.md). Most dataset hosts are blocked from this sandbox, so each fact there is tagged READ (primary file read), SEARCH (search results only), or UNVERIFIED.
 
-> _Pending: source-by-source verification (URLs, access method, license) is in progress and will be filled in here and in `docs/DATASETS.md` before approval is requested._
+| Source | Role | Conditions it covers | License (short) |
+|---|---|---|---|
+| FathomNet (MBARI) | pretraining; patch probe (boxes) | deep/midwater, ROV-lit, dark | per upload CC0 / BY / BY-NC / BY-NC-ND; **ToS explicitly allows ML training**; never redistribute images |
+| NOAA Ocean Exploration (Okeanos `EX` cruises) | pretraining; V-JEPA clips | deep dives incl. Gulf of Mexico, marine snow | public domain (EX cruises only; no bulk API) |
+| DeepFish | **frame probe** (fish/no-fish); masks | tropical coastal, mostly clear | CC BY 4.0 |
+| Kakadu freshwater fish | patch probe; pretraining | **freshwater** billabongs | CC BY 4.0 |
+| MIT River Herring (LILA) | **frame probe; dark slice** | freshwater river, ~35% night | CDLA-Permissive-1.0 |
+| Brackish (AAU) | **murky-slice** evaluation | turbid, LED-lit | **conflicting reports; likely CC BY-SA 4.0**; you confirm on Kaggle |
+| OzFish (AIMS) | pretraining frames | coastal BRUV | CC BY |
+| Ocean Networks Canada | pretraining (dark, lights on/off) | deep fixed cameras | CC BY 4.0 for ONC-owned devices; partner devices vary |
+| **Your dives** | **murky freshwater test set** | the target domain | yours |
+
+**Deferred:** SEAMAPD21, a Gulf of Mexico reef-fish video set, states no license; worth asking NOAA SEFSC. Also deferred: Fish4Knowledge (low relevance), and UIEB, LSUI, TrashCan, and Schmidt Ocean (non-commercial or academic-only terms).
 
 **License posture (your decision, §11).** The pipeline stores `license`, `source`, `attribution`, and `commercial_ok` for **every image**. Any training set can then be rebuilt with, for example, `curate.license_filter=commercial_ok`. Whether model weights trained on NC data may be used commercially is legally unsettled. If commercial use is a possibility, we keep a "clean" training variant from the start.
 
 ### 3.2 Curation pipeline (`talosaur.data`)
 
 1. **Fetch.** One module per source. Each prints the source's license and requires `--accept-license <id>` before downloading. It writes a manifest (URL, checksum, license, attribution, retrieval date).
+   - FathomNet: pages through the API with at most 4 workers and backoff, resizing on the fly. The originals would be ~1.5 TB of PNGs; resized it's ~30 GB. The per-image license is read from its upload record.
+   - NOAA: works from a URL manifest you export from the video portal. The low-res H.264 files are enough for training frames.
 2. **Frame extraction from video** (ffmpeg).
    - Sample at 1–2 fps, with scene-change boosting.
    - Detect burned-in HUD/text overlays with a temporal median plus an edge-persistence mask, then crop or mask them.
@@ -105,13 +144,22 @@ It goes through the same video path with `source=talosaur_dives, license=own`. L
   - ViT-S/16: dim 384, depth 12, 6 heads, 21.7 M params.
   - Both: 2-D sin-cos positions, no CLS token, rectangular grids supported.
 - **Predictor.** Narrow ViT: default dim 128, depth 6 for Ti; dim 192, depth 6 for S. Ablate width and depth. (I-JEPA found a narrow predictor helps.)
-- **Masking.** The official I-JEPA multi-block recipe:
+- **Masking.** The official I-JEPA multi-block recipe. These are the values every shipped config uses; the class defaults in the code differ.
   - 1 context block, scale 0.85–1.0;
   - 4 target blocks, scale 0.15–0.2, aspect ratio 0.75–1.5;
-  - targets removed from the context; `min_keep` of 10.
-  - Parameters are re-derived per grid so they work on 10×10 and 13×7 grids. The exact values will be checked against the official `src/masks/multiblock.py`.
-- **Target and loss.** EMA target encoder (momentum 0.996 → 1.0), smooth-L1 on layer-normed target features at target positions.
-- **Optimisation.** AdamW with cosine LR and warmup; weight decay 0.04 → 0.4 (I-JEPA schedule); LR scaled linearly from the reference batch.
+  - `min_keep` 10, no overlap; targets are removed from the context.
+- **Masking quirks in the official collator.**
+  - One random draw sets both a block's scale and its aspect ratio.
+  - The context block is always square.
+  - All masks in a batch are cut to the shortest one.
+  - `randint(0, H−h)` means **a block never touches the bottom or right edge**. On a 10×10 grid that leaves ~19% of patches never predicted, which hurts heatmaps at the image border.
+
+  Our collator fixes the edge bias and the correlated draw by default. `masks.official_compat=true` reproduces the official behaviour exactly, for parity tests and as an ablation.
+- **Target and loss.** EMA target encoder (momentum 0.996 → 1.0, linear), smooth-L1 on layer-normed target features at target positions.
+- **Optimisation.**
+  - The official ViT-H recipe: batch 2048 across 16 GPUs; AdamW lr 1e-3 (starting at 2e-4, 40-epoch warmup, cosine to 1e-6); weight decay 0.04 → 0.4; 300 epochs; random-resized crop 0.3–1.0 and no other augmentation.
+  - On 8 GB cards we run batch 256–512 per step: LR scaled linearly, a shorter warmup, and optional gradient accumulation. These are retuned on the first short runs.
+  - The official predictor is 384 wide for ViT-H, with depth from the config.
 - **Resolution.** Default pretrain at 224 (Ti and S) with probes at 112/160/224/208×112. A Ti variant uses multi-resolution batches (128–224) so small inputs are in-distribution.
 - **Init options.** `init=scratch` (default), `init=imagenet` (timm ViT-Ti weights, then continued I-JEPA on underwater data), `init=distilled` (from §4.4). This is the practical "what gets the best Pi model" comparison.
 - **Engineering.**
@@ -148,18 +196,23 @@ Details:
 
 ### 4.3 Optional: V-JEPA video stage (`talosaur.ssl.vjepa`)
 
-- Clips of 16 frames at stride 2–6 from 30 fps source, 128–160 px, pre-extracted to low-res clip shards so decoding doesn't starve the GPU.
-- 3-D multi-block tube masking with the V-JEPA defaults (8 short-range + 2 long-range blocks spanning time) and an L1 loss.
-- Initialised from the I-JEPA checkpoint (patch embed inflated to tubelets).
-- Tubelet 2 is the V-JEPA-2 convention, where an image is fed as a repeated frame. It enables an **optional onboard 2-frame mode**: (previous, current) frames at the same token count as one image. That gives the encoder motion cues at almost no extra Pi cost. Single-frame deployment stays the default.
+- **Clips.** 16 frames at stride 2–6 from 30 fps source, 128–160 px, pre-extracted to low-res clip shards so decoding doesn't starve the GPU.
+- **Masking and loss.** 3-D multi-block tube masking with the verified V-JEPA defaults:
+  - tubelet 2, 16 frames, sampling rate 4;
+  - 8 blocks at spatial scale 0.15 plus 2 at 0.7, each spanning the whole clip;
+  - aspect 0.75–1.5; L1 loss; EMA 0.998 → 1.0.
+- **Tokenizers.** Following V-JEPA 2.1 (MIT): a separate **image tokenizer (tubelet 1)** and **video tokenizer (tubelet 2)** feed one shared transformer, with a learned modality embedding. Images and clips are interleaved during training. The onboard single-frame path therefore benefits from video pretraining without any change to deployment.
+- **Initialisation.** From the I-JEPA checkpoint.
+- **Optional 2-frame deployment mode.** Feed (previous, current) frames through the video tokenizer, at the same token count as one image. That gives the encoder motion cues at almost no extra Pi cost. Single-frame stays the default.
 
 ### 4.4 Optional: distillation into ViT-Ti (`talosaur.ssl.distill`)
 
-- Teachers, in order of how permissive their licence is:
-  1. **DINOv2 ViT-S/14 or ViT-B/14** (Apache-2.0; default);
-  2. DINOv3 small models (DINOv3 License — terms in §10);
-  3. I-JEPA ViT-H/14 (CC BY-NC; research only). There are **no official I-JEPA or V-JEPA weights at Tiny/Small size**, so any JEPA teacher is huge.
-- Patch-token distillation: student 224 px/16 and teacher 196 px/14 both give **14×14 grids**, so no interpolation is needed. Loss is cosine plus smooth-L1 through a linear projector, plus a pooled-token term.
+- **No official I-JEPA or V-JEPA weights exist at Tiny or Small size** (verified). The smallest JEPA checkpoint is V-JEPA 2.1 ViT-B/16. Teachers, most permissive licence first:
+  1. **DINOv2 ViT-S/14 or ViT-B/14.** Apache-2.0 for both code and weights; the default.
+  2. **V-JEPA 2.1 ViT-B/16.** 80 M parameters, 384 px, itself distilled from ViT-G; MIT. This is the "larger pretrained JEPA" teacher and fits on a 2080. Its torch.hub loader on `main` points at `localhost`, so we load the checkpoint file directly.
+  3. DINOv3 ViT-S/16 or ViT-S+/16. Under the DINOv3 License: commercial use is not prohibited, but downloads are gated and **military/warfare uses are banned**.
+  4. I-JEPA ViT-H/14. CC BY-NC, so research use only.
+- **Patch-token distillation.** For DINOv2, a student at 224 px/16 and a teacher at 196 px/14 both give **14×14 grids**, so no interpolation is needed. For V-JEPA 2.1 (also /16), the teacher runs at 224. Loss is cosine plus smooth-L1 through a linear projector, plus a pooled-token term.
 - Runs to compare: scratch-JEPA, distill-only, distill → JEPA, and JEPA + λ·distill.
 - Teacher features can be cached for fixed crops to save 2080 time.
 
@@ -187,7 +240,7 @@ Every K epochs: a periodic linear probe on cached probe sets. Frame AUROC, patch
 | E5 | ViT-Ti/16 | 224 | best | imagenet | practical init |
 | E6 | ViT-S/16 | 224 | best | scratch | size comparison |
 | E7* | ViT-Ti/16 | 160 video | best | E-best | V-JEPA stage |
-| E8* | ViT-Ti/16 | 224 | best | DINOv2 distill | distillation study |
+| E8* | ViT-Ti/16 | 224 | best | distill (DINOv2-S/B, V-JEPA 2.1-B) | distillation study |
 
 \* optional stages.
 
@@ -224,19 +277,20 @@ The data loader has to deliver ~400–2,000 img/s. Hence pre-resized JPEGs, degr
 ## 5. Evaluation (`talosaur.eval`)
 
 1. **Frame probe (animal / no animal).** Logistic regression on pooled frozen features.
-   - Data: DeepFish fish/no-fish frames; Brackish frames with and without annotations; FathomNet **crop-level presence** (crops containing an Animalia box vs. crops with no box overlap).
-   - FathomNet annotation may be incomplete, so FathomNet negatives are reported separately.
+   - Data: DeepFish fish/no-fish frames (held-out habitats); River Herring fish/empty frames, day and night; FathomNet **crop-level presence** (crops containing an Animalia box vs. crops with no box overlap).
+   - FathomNet and Brackish annotations are not exhaustive, so their negatives are reported separately.
    - Metrics: AUROC, AP, balanced accuracy, and **TPR at 5% FPR** (search-mode false-alarm budget).
 2. **Patch probe (localisation).** Per-patch logistic regression.
-   - Labels: boxes → patch masks (positive if ≥ 30% of the patch is covered; configurable), DeepFish segmentation masks, Brackish/OzFish boxes.
+   - Labels: boxes → patch masks (positive if ≥ 30% of the patch is covered; configurable) from FathomNet, Kakadu (freshwater), and Brackish (murky); plus DeepFish segmentation masks.
    - Metrics: patch AUROC/AP, IoU at the best threshold, plus **steering metrics** in image coordinates: centroid error in degrees (using the camera model), log apparent-size error, and hit-rate (heatmap peak inside a GT box).
    - The steering metrics make models with different grids (DINOv2 /14, MobileNet /16 or /32) directly comparable.
 3. **Slices.** Every metric is reported on *all / dark / murky / clear*, with slice sizes and bootstrap 95% CIs. Slices come from §3.2.
 4. **Synthetic robustness sweep ("Underwater-C").** Clear test images are degraded at severities 1–5 per degradation type. To reduce circularity with the training augmentation, the test uses held-out parameter ranges and a different particle and noise generator. It is still reported as **secondary** to the real dark/murky slices.
-5. **Baselines, through the identical harness.**
-   - DINOv2 ViT-S/14 (at 224 and at a grid-matched 196);
-   - ImageNet ViT-Ti/16 (timm AugReg);
-   - MobileNetV3-Large (torchvision; stride-16 feature map for patch probes).
+5. **Baselines, through the identical harness.** Each model gets its own input normalisation.
+   - DINOv2 `dinov2_vits14` (Apache-2.0; ImageNet mean/std), at 224 and at a grid-matched 196.
+   - ImageNet ViT-Ti/16 `timm vit_tiny_patch16_224.augreg_in21k_ft_in1k` (Apache-2.0; mean/std **0.5**).
+   - MobileNetV3-Large `IMAGENET1K_V2` (torchvision; stride-16 feature map for patch probes). Note: torchvision says pretrained weights may carry dataset terms, and ImageNet's terms are non-commercial.
+   - Optional: DeiT-Tiny.
    - The table also reports **params, GMACs, and measured Pi 5 fps**, because accuracy per Pi millisecond is the real trade-off.
 6. **Frozen-probe → deployed-head parity.** The deployed heads *are* these probes (with an optional tiny MLP/3×3 smoothing), so evaluation numbers carry straight over to the Pi graph.
 
@@ -253,9 +307,10 @@ The data loader has to deliver ~400–2,000 img/s. Hence pre-resized JPEGs, degr
 1. Threshold the heatmap, take connected components, and pick the target component: the one nearest the previous track, otherwise the one with the most mass.
 2. Probability-weighted centroid (sub-patch precision) and apparent size (√area fraction).
 3. Pixel → angle through a camera model:
-   - Camera Module 3 Wide, in-air horizontal FoV ≈ 102° (to confirm);
-   - a **flat port narrows this underwater** by refraction (roughly 70° HFOV); a dome port preserves it;
+   - Camera Module 3 Wide: IMX708, 2.75 mm f/2.2, **102° × 67° FoV in air** (120° diagonal);
+   - a **flat port narrows this underwater** by refraction, to roughly 71° × 49° (Snell's law estimate); a dome port preserves it;
    - an in-water checkerboard calibration script is included.
+   - At 208×112 input each patch spans about 5–8°, and the weighted centroid gives sub-patch precision.
 4. Constant-velocity Kalman filter on (bearing, elevation, log size), with gating and dropout hold.
 5. Controller:
    - yaw rate ∝ bearing error; heave/pitch ∝ elevation error;
@@ -273,29 +328,38 @@ The data loader has to deliver ~400–2,000 img/s. Hence pre-resized JPEGs, degr
 ## 7. Deployment on the Pi 5 (1 GB)
 
 - **Export.** Encoder + frame head + heatmap head as **one ONNX graph** per fixed input size (112², 160², 224², 208×112; 16:9 variants on request). Opset ≥ 17, positional embeddings baked in, export-safe attention. Checked with the ORT transformer optimizer.
-- **Int8 static quantisation** (onnxruntime).
-  - QDQ format, per-channel weights, MatMul/Gemm/Conv quantised; LayerNorm, Softmax, and GELU stay in float at first.
+- **Int8 static quantisation** (onnxruntime 1.30; Pi wheels exist for Python 3.11–3.14).
+  - First run `quant_pre_process` and the ORT transformer optimizer.
+  - QDQ format with **S8S8**, ORT's recommended default. Set `per_channel=True` explicitly, since it is off by default.
+  - Pass **`op_types_to_quantize=[MatMul, Gemm, Conv]`**. If left unset, ORT also quantizes Add, Mul, Softmax, and LayerNorm, which is risky for ViTs.
   - Calibration: ~300–500 train-split images **stratified across dark/murky/clear**. Dark images have much smaller activations; leaving them out would mis-set ranges.
-  - Compare MinMax, Percentile, and Entropy calibration, and S8S8 vs U8S8.
+  - Compare MinMax, Percentile, and Entropy calibration against **dynamic** int8, which ORT recommends for transformers.
   - Parity report (fp32 torch vs fp32 ORT vs int8): Δ frame AUROC, Δ patch AUROC, Δ centroid error, heatmap correlation.
   - Fallbacks if int8 hurts: exclude sensitive layers (patch-embed, final heads), dynamic quantisation, then QAT.
-- **ncnn.** PyTorch → PNNX → ncnn, with fp16 storage and arithmetic (Cortex-A76 supports ARMv8.2 FP16 — to confirm) and int8 where ncnn supports the ops (to confirm, §10).
+  - The Pi 5's A76 cores **have** the int8 dot-product instructions ORT uses. They **lack** i8mm, so ORT's faster int8 matrix-multiply kernels are unavailable.
+- **ncnn.** PyTorch → PNNX → ncnn.
+  - PNNX fuses attention patterns into ncnn's `MultiHeadAttention`; the export checks the fusion happened.
+  - fp16 storage and arithmetic are on by default on the A76 (FP16 support confirmed).
+  - Int8 via `ncnn2table` → `ncnn2int8`; ncnn's Gemm and MultiHeadAttention both support int8.
 - **Pi benchmark** (`python -m talosaur.onboard.benchmark`).
   - Sweeps runtime (ORT fp32/int8, ncnn fp16/int8) × size (112/160/224/208×112) × threads (1–4).
   - Reports warm-up-excluded latency (mean/p50/p90/p99), fps, **peak process RSS and system available memory**, CPU temperature, frequency, and `vcgencmd get_throttled` flags.
   - Includes a **10-minute sustained run** (thermal throttling inside a sealed hull is a real risk) and optional concurrent camera capture and H.264 recording load.
   - Outputs Markdown + CSV.
-- **Back-of-envelope Pi 5 estimate** (unmeasured; assumes 15–30 effective GFLOPS fp32 with 4 threads):
+- **Back-of-envelope Pi 5 estimate** (unmeasured). **No published Pi 5 numbers exist for ViT-Tiny.** The only anchor is ncnn's own Pi 5 benchmark: a ~13-GMAC ViT-B/32 at 384 px took 612 ms on 4 threads, about 20 GMAC/s. Scaling from that, with a discount for small-matrix inefficiency:
 
   | Model / size | Estimated fps |
   |---|---|
-  | ViT-Ti @160 | ~12–25 |
-  | ViT-Ti @224 | ~6–12 |
-  | ViT-S @224 | ~1.5–3 |
+  | ViT-Ti @112 | ~40–70 |
+  | ViT-Ti @160 | ~20–33 |
+  | ViT-Ti @208×112 | ~20–35 |
+  | ViT-Ti @224 | ~10–16 |
+  | ViT-S @224 | ~3–5 |
 
-  The 3 fps target at 112–160 looks comfortable, which leaves CPU for encoding. The benchmark in M6 replaces these guesses.
+  The 3 fps target at 112–160 looks comfortable even with ~30–40% of the CPU going to H.264 recording. The M6 benchmark replaces these guesses.
 - **Memory budget** (target: whole system < 600 MB, process peak < 350 MB):
-  - Raspberry Pi OS Lite 64-bit, no desktop;
+  - Raspberry Pi OS Lite 64-bit, no desktop. The current OS is Debian Trixie with Python 3.13;
+  - **No PyTorch on the Pi.** The PyPI aarch64 torch wheel is 454 MB and pulls CUDA dependencies. onnxruntime and ncnn both have aarch64 wheels;
   - ViT-Ti int8 ≈ 6 MB of weights;
   - ORT session plus Python and numpy ≈ 100–150 MB;
   - camera buffers plus encoder ≈ 100–200 MB;
@@ -368,7 +432,31 @@ Each milestone ends with green CI, a README section, and a short "run this, send
 
 ## 10. Uncertainties
 
-> _Pending: verification of reference-code licenses/weights, Pi 5 hardware facts, and dataset access is in progress._
+**Data access and licensing**
+1. **I can't download any dataset from this sandbox.** The hosts are blocked by the environment's network policy. The fetchers will be unit-tested against recorded API responses, and their first live run happens on your machine. To let me test them here, add the hosts to the environment's allowed domains.
+2. **FathomNet terms.** The training clause comes from search results and FathomNet's competition terms; the full Terms of Use page was blocked here. Commercial use of weights trained on NC/ND images needs a legal read. Our mitigations: per-image license tracking, and a commercial-clean rebuild flag.
+3. **Brackish license conflict.** CC BY-SA vs CC BY vs CC BY-NC-SA. Please check the Kaggle page.
+4. **Search-only licences.** River Herring (CDLA-Permissive), NOAA video (public domain), and Ocean Networks Canada (CC BY 4.0, varies by device). The fetchers re-display the licence at download time.
+5. **OzFish.** Whether the links still work and the total size are unknown.
+6. **SEAMAPD21.** The Gulf of Mexico reef-fish video is valuable, but no licence is stated.
+7. **NOAA video has no bulk API.** You export URL lists from the portal. Full-res files need ordering, with links that expire; the low-res files are likely sufficient.
+8. **Freshwater data is scarce.** Kakadu, River Herring, and Brackish are proxies. **Your own lake footage is the real test.**
+9. **Label completeness.** FathomNet, OzFish, and Brackish boxes are not exhaustive, so "no box" negatives are noisy. They are reported separately.
+
+**Models and training**
+10. **No official small JEPA weights.** Tiny and Small train from scratch, or from ImageNet or distilled inits.
+11. **ImageNet-derived weights.** They are only baselines or optional inits, but their licensing is murky: timm/AugReg is Apache-2.0 while ImageNet's own terms are non-commercial.
+12. **Compute estimates are analytic (±2×).** Small ViTs use tensor cores poorly and loaders often bottleneck. M2 starts with a measured throughput benchmark on your 2080.
+13. **Hyperparameters for batch 256–512 on 8 GB** are extrapolated from the batch-2048 recipe. Expect a short LR/warmup/EMA sweep.
+14. **`context_only` degradation is a hypothesis**, not established practice. The ablation (E1–E3) decides.
+15. **Synthetic degradation realism.** Checked visually via `viz_degrade`, and indirectly by the real dark/murky slices.
+
+**Deployment**
+16. **Pi 5 fps and memory are unmeasured.** The estimates in §7 come from one ncnn data point. **Measure early**: the M6 benchmark can run with random weights before any training finishes.
+17. **Int8 accuracy for ViTs is uncertain.** We have fallbacks, and ncnn fp16 may turn out as fast as ORT int8 on the A76.
+18. **Thermal throttling inside a sealed hull.** The sustained benchmark logs temperatures and throttle flags, but the hull's thermal path is yours to test.
+19. **Flat vs dome port** changes the bearing calibration.
+20. **Camera behaviour in the dark.** Exposure/gain limits and autofocus hunting in turbid water need in-water tests. The onboard config exposes AE/AF limits.
 
 ---
 
