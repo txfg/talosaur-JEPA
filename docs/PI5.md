@@ -140,12 +140,13 @@ recent Raspberry Pi OS images have no default `pi` user.
 [Unit]
 Description=Talosaur onboard vision
 After=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 User=<user>
 WorkingDirectory=/home/<user>/talosaur-JEPA
 ExecStart=/home/<user>/talosaur-venv/bin/python -m talosaur.onboard.app --config configs/onboard/pi5.yaml
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]
@@ -154,6 +155,12 @@ WantedBy=multi-user.target
 
 Enable it with `sudo systemctl enable --now talosaur`. Watch it with `journalctl -u talosaur -f`.
 SIGTERM stops the loop cleanly: the recording is closed and the camera released.
+
+`Restart=always` restarts the app whatever made it stop, and `StartLimitIntervalSec=0` stops
+systemd from ever giving up. If the app crashes mid-dive, recording resumes a few seconds later
+in a new session's files. Another open-source Pi underwater camera (FishCam) ran its recorder
+without a restart, and there five errors in a row ended recording until the next boot
+(docs/SEARCH.md §1.6).
 
 ## 5. Output: telemetry and vehicle commands
 
@@ -184,7 +191,8 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
   - A bridge that cannot use them ignores them: the rates already steer toward them whenever
     navigation input (below) is available.
 - `cmd.light` is the lamp level, 0 to 1 (docs/SEARCH.md §4): off while searching if the camera can
-  see by ambient light, dim if it cannot, and the `track` level close to an animal. `null` means
+  see by ambient light, dim and steady if it cannot, ramped up gradually, and unchanged close to an
+  animal unless `lights.track` is set. `null` means
   guidance leaves the lights to the vehicle (`lights.control: false`). `lights` shows the decision:
   `dark`, the measured ambient brightness (`ambient`, 0–1, measured with the lamp off), and
   whether a lamp-off check is running.
@@ -249,8 +257,19 @@ run. The state machine never switches it off.
 - **Encounter log.** Each line of `logs/encounters.jsonl` lists the files that show that animal and
   the offset into the first one: `"recordings": [{"file": "..._00007.ts", "offset_s": 212.4}]`.
 - **Storage.** 6 Mbit/s is 2.7 GB per hour. The app logs the free space and the hours it allows at
-  start, and adds `disk_free_mb` to its stats messages. For long dives, use a large, fast card or an
-  NVMe SSD on the Pi 5's PCIe port.
+  start, and adds `disk_free_mb` to its stats messages. For long dives, use a large high-endurance
+  microSD card (the dashcam class, which FishCam recommends for continuous recording) or an NVMe
+  SSD on the Pi 5's PCIe port.
+- **Write errors.** If writing fails, for example because the card is full, picamera2's output
+  closes the file and would silently drop every frame after it. The recorder catches the error,
+  makes room (below), and switches to a fresh segment within `retry_s` (5 s). The segment index
+  marks it `closed_after_error`.
+- **Power cuts.** Every closed segment and the segment index are flushed to storage (`fsync`).
+  Linux can otherwise hold tens of seconds of written data in memory. The segment being written
+  loses at most its last moments.
+- **CPU.** Raspberry Pi rate software H.264 at 1080p30 at about 30–40% of the Pi 5's CPU, on the
+  same cores as the model. `recording.encoder_threads` (2) caps the encoder's threads; left alone,
+  x264 picks 6. The benchmark's `--record-load picamera2` measures what is left for the model.
 - **Low disk.** Below `min_free_mb` (2 GB), `low_disk: delete_empty` deletes the oldest finished
   segments that show **no** animal. It never deletes animal footage or anything since the current
   encounter began. `low_disk: stop` stops recording instead. Either way, recording stops below

@@ -330,7 +330,7 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
 8. **Search** (added after M6 review; [`docs/SEARCH.md`](SEARCH.md)). Built from depth, heading and time only, because horizontal position drifts without a DVL:
    - an initial depth profile, then depth bands chosen by Thompson sampling of their detection rates, with a time-of-day prior for vertical migration;
    - long relocation legs, switching to a tight local search after each find (animals come in patches), steering away from water already covered;
-   - the lamp off while the camera can see by ambient light, dim when it cannot, a tracking level once an animal is close;
+   - the lamp off while the camera can see by ambient light, dim and steady when it cannot, never switched on suddenly or near an animal;
    - a closed-loop simulator (`talosaur.sim`) to compare strategies before dives.
 9. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11). Navigation input (depth, heading) comes back from the autopilot bridge over UDP.
 

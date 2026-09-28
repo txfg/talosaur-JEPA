@@ -267,7 +267,7 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
    - Animals already filmed are recognised by appearance, not position: the model's patch features over the animal, compared with the ones it remembers.
    - A recognised animal is ignored for a cooldown. An animal that only swam out of view resumes where it left off. Animals unlike any filmed so far get more time.
    - Every encounter is logged to `logs/encounters.jsonl`, with why it ended and where it is in the video.
-8. A controller issues normalised yaw-rate / heave / surge requests, heading and depth setpoints, and a lamp level. The lamp stays off while the camera can see by ambient light, goes dim when it cannot, and uses a tracking level once an animal is close. Commands have a deadband, rate limits and a hard stand-off.
+8. A controller issues normalised yaw-rate / heave / surge requests, heading and depth setpoints, and a lamp level. The lamp stays off while the camera can see by ambient light and goes dim when it cannot. It is never switched on suddenly or turned up near an animal, since light coming on is what makes fish flee. Commands have a deadband, rate limits and a hard stand-off.
 9. **Recording** runs continuously for the whole run, in 5-minute crash-safe segments. A low-disk guard only ever deletes segments without animals.
 10. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge; depth and heading come back over UDP. The autopilot choice is still open.
 

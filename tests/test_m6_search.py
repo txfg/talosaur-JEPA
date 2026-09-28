@@ -195,12 +195,23 @@ def test_search_telemetry_and_setpoints_in_the_pipeline():
 
 
 def _lamp(policy, luma, seconds, t0=0.0, dt=0.2, close=False):
-    """Run the lamp policy; ``luma(lamp)`` is the picture brightness under last frame's lamp level."""
+    """Run the lamp policy; ``luma(lamp)`` is the picture brightness under last frame's lamp level;
+    ``close`` also means an animal is being filmed."""
     levels, t = [], t0
     for _ in range(int(round(seconds / dt))):
         t += dt
-        levels.append(policy.update(t, luma(policy.level), close))
+        levels.append(policy.update(t, luma(policy.level), close, engaged=close))
     return levels, t
+
+
+def test_lamp_never_switches_on_suddenly_and_skips_checks_while_filming():
+    p = LightPolicy(LightsConfig(search_dark=0.3, ramp_s=5.0, check_s=60, check_len_s=3))
+    night = lambda lamp: 0.02 + 0.3 * lamp  # noqa: E731
+    levels, t = _lamp(p, night, 10)
+    steps = np.diff([0.0] + levels)
+    assert p.dark and levels[-1] == pytest.approx(0.3) and steps.max() <= 0.2 / 5.0 + 1e-9  # ramped
+    levels, t = _lamp(p, night, 120, t0=t, close=True)  # filming an animal for 2 min ...
+    assert min(levels) == pytest.approx(0.3)  # ... no lamp-off check, no change when close
 
 
 def test_lamp_stays_off_while_the_camera_can_see():
@@ -222,9 +233,11 @@ def test_lamp_goes_dim_in_the_dark_and_checks_for_daylight():
 
 
 def test_lamp_track_level_when_close_and_fixed_level_without_brightness():
-    p = LightPolicy(LightsConfig(search=0.1, track=0.5))
+    p = LightPolicy(LightsConfig(search=0.1, track=0.5, ramp_s=0.0))
     assert p.update(1.0, None, close=False) == 0.1 and p.update(1.2, None, close=True) == 0.5
     assert LightPolicy(LightsConfig(control=False)).update(1.0, 0.5, False) is None
+    default = LightPolicy(LightsConfig(search=0.2, ramp_s=0.0))  # track: None
+    assert default.update(1.0, None, close=False) == default.update(1.2, None, close=True) == 0.2
     g = Guidance(GuidanceConfig())
     empty = np.full((7, 13), -4.0, np.float32)
     for k in range(20):  # 4 s of dark water

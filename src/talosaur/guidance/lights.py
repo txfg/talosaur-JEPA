@@ -1,15 +1,17 @@
 """Lamp policy: as little light as possible, but enough to see.
 
 Midwater animals avoid artificial light - red included - often tens of metres away; dim far-red
-light disturbs least (docs/SEARCH.md §1). So the lamp stays off while searching as long as the
-camera can see by ambient light (a lake by day, the upper twilight zone by day), and goes to a
-dim level only when it is too dark. Close to an animal it uses the ``track`` level.
+light disturbs least, and the *onset* of light is itself a trigger to flee (docs/SEARCH.md §1). So
+the lamp stays off while searching as long as the camera can see by ambient light (a lake by day,
+the upper twilight zone by day), and goes to a dim level only when it is too dark. It is not
+switched on or up when an animal is close (``track`` is off by default), and every increase is
+ramped over ``ramp_s``.
 
 "Too dark" comes from the frame's mean brightness with the lamp off: with auto-exposure, a scene
 the camera can expose properly sits near the exposure target, so a mean well below it means the
 exposure and gain are at their limits. While the lamp is on for darkness, it is switched off
 every ``check_s`` for ``check_len_s`` to see whether ambient light is back (dawn, shallower
-water). Switching a lamp *off* does not disturb animals.
+water), only while searching - never while filming an animal.
 
 Without a brightness input (``luma=None``) the lamp simply uses ``search`` while searching.
 """
@@ -25,11 +27,12 @@ class LightsConfig:
     control: bool = True  # False: leave the lamp to the vehicle (Command.light = None)
     search: float = 0.0  # lamp level while searching when the camera can see by ambient light ...
     search_dark: float = 0.3  # ... and when it cannot (needs the frame brightness)
-    track: float = 0.3  # once an animal is close (apparent size >= near_size)
+    track: float | None = None  # once an animal is close (apparent size >= near_size); None: no change
     near_size: float = 0.08
+    ramp_s: float = 5.0  # an increase from off to full takes this long (a sudden onset startles)
     dark_luma: float = 0.08  # mean frame brightness (0-1) with the lamp off below which it is too dark
     settle_s: float = 1.0  # after the lamp goes off, wait this long (auto-exposure) before measuring
-    check_s: float = 120.0  # lamp on for darkness: switch it off this often ...
+    check_s: float = 300.0  # lamp on for darkness: while searching, switch it off this often ...
     check_len_s: float = 3.0  # ... for this long, to see whether ambient light is back
 
 
@@ -44,8 +47,9 @@ class LightPolicy:
         self.next_check = math.inf
         self._t: float | None = None
 
-    def update(self, t: float, luma: float | None, close: bool) -> float | None:
-        """Lamp level (0-1) for this frame; ``close``: filming an animal near the camera."""
+    def update(self, t: float, luma: float | None, close: bool, engaged: bool = False) -> float | None:
+        """Lamp level (0-1) for this frame. ``close``: an animal near the camera; ``engaged``:
+        filming one (no lamp-off checks then)."""
         c = self.cfg
         if not c.control:
             return None
@@ -65,14 +69,19 @@ class LightPolicy:
                 self.next_check = t + c.check_s
         elif not self.dark and self.ambient is not None and self.ambient < c.dark_luma:
             self.dark, self.next_check = True, t + c.check_s
-        if close:
-            level = c.track
-        elif self.dark:
-            if self.check_until is None and t >= self.next_check:
+        if self.dark:
+            if self.check_until is None and t >= self.next_check and not engaged:
                 self.check_until, self.ambient = t + c.check_len_s, None  # measure afresh
+            if self.check_until is not None and engaged:
+                self.check_until = None  # an animal turned up: abandon the check, lamp back on
+                self.next_check = t + c.check_s
             level = c.search if self.check_until is not None else c.search_dark
         else:
             level = c.search
+        if close and c.track is not None:
+            level = c.track
+        if level > self.level and c.ramp_s > 0:
+            level = min(level, self.level + dt / c.ramp_s)  # never switch on suddenly
         if level <= 0.0 and self.level > 0.0:
             self.off_since = t
         elif level > 0.0:

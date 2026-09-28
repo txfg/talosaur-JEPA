@@ -173,7 +173,7 @@ class Guidance:
                 t, t - self.fsm.since, self.release_away, heading, self.release_heading
             )
         close = st in ENGAGED and track.active and track.size >= c.lights.near_size
-        cmd.light = self.lights.update(t, luma, close)
+        cmd.light = self.lights.update(t, luma, close, engaged=st in ENGAGED)
         if track.active:
             self.last_yaw = track.yaw
         nov = None

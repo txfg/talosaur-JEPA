@@ -25,6 +25,7 @@ recording:                          # docs/PI5.md section 6
   format: mpegts                    # continuous: .ts plays up to the last frame even after a power cut
   min_free_mb: 2000                 # continuous: below this, free space by deleting the oldest footage WITHOUT animals ...
   low_disk: delete_empty            # ... (delete_empty) or stop recording (stop); animal footage is never deleted
+  encoder_threads: 2                # software H.264 threads (x264 picks 6 on its own, competing with the model)
   preroll_s: 5                      # events mode only: seconds kept before each encounter
 
 guidance:                           # tuning guide: docs/PI5.md section 11
@@ -79,9 +80,10 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     search: 0.0                     # lamp level while searching when the camera can see by ambient light ...
     search_dark: 0.3                # ... and when it cannot (frame brightness with the lamp off < dark_luma)
     dark_luma: 0.08                 # check on the vehicle: telemetry lights.ambient in dark and lit water
-    check_s: 120                    # lamp on for darkness: switch it off this often to look for ambient light
-    track: 0.3                      # once an animal is close (apparent size >= near_size)
-    near_size: 0.08
+    check_s: 300                    # lamp on for darkness: while searching, switch it off this often to look for daylight
+    track: null                     # close to an animal: null = no change (light coming on makes animals flee) ...
+    near_size: 0.08                 # ... or a level to ramp up to once the animal is this big
+    ramp_s: 5                       # an increase from off to full takes this long, never a sudden switch-on
 
 nav:                                # depth / heading / turn rate from the autopilot bridge (docs/PI5.md section 5)
   kind: none                        # none | udp  (JSON datagrams: {"depth_m":..., "heading_deg":..., "yaw_rate_dps":...})

@@ -10,11 +10,15 @@ simulator is a caricature of the ocean; your own dives replace its numbers.
 **How much to trust each finding.** Most journal sites are blocked from the environment this was
 built in. Each finding therefore says how it was checked:
 
-- **abstract**: the paper's abstract, read through search-engine extracts;
-- **abstract, 3/3**: also confirmed against its quote by three independent reviewers;
+- **full text** or **abstract**: how much of the paper could be read; abstracts came through
+  search-engine extracts;
+- **3/3** or **confirmed**: checked against the source by three independent reviewers, all or a
+  majority agreeing;
 - **search**: from search results only, which may paraphrase. Treat these as leads to read
   before relying on them;
 - **source code** or **docs**: read in full.
+
+Claims the reviewers rejected are left out, or named as rejected where the design had used them.
 
 Where a finding comes from another place (Monterey Bay, Arctic fjords), applying it to the Gulf
 is an extrapolation, and says so.
@@ -39,21 +43,34 @@ is an extrapolation, and says so.
 - profile the whole range first;
 - favour the corridor while the migrators cross it, starting earlier at dawn than at dusk;
 - favour shallow bands at night;
-- use no prior by day, and expect few animals at 100–200 m then.
+- use no prior by day.
+
+Do not assume the band is empty by day or at night: trawls in the Gulf have caught lanternfish
+down to about 200 m by day. A claim that the band holds fewer animals outside the migrations was
+rejected in verification. The detections decide.
 
 ### 1.2 How animals react to the vehicle
 
 - **Light, red included, drives animals away.** Pelagic fish and zooplankton strongly avoided
-  white, blue and red (575–700 nm) light on lowered instruments. Density fell by up to 99%, and
-  avoidance reached 23–94 m from the light, depending on colour, brightness and community. This
-  was measured with echosounders, so the lights did not bias the measurement. The sites were
-  Arctic fjords in the polar night and coastal Newfoundland; the Gulf is an extrapolation.
-  *(abstract; [Geoffroy et al. 2021](https://www.nature.com/articles/s41598-021-94355-6))*
-- **Far-red is least disturbing, and species differ.** With no vehicle present (a fixed camera in
-  Monterey Canyon), sablefish stayed in view longer under far-red (695 nm) than under red
-  (685 nm) or white light. They often fled when white light came on, and sometimes when red did.
-  Pacific grenadier did not flee in the same way. *(abstract;
-  [Raymond & Widder 2007](https://www.int-res.com/abstracts/meps/v350/p291-298/))*
+  white, blue and red (575–700 nm) light on lowered instruments.
+  - Density fell by up to 99%, and by more than 90% within 20 m of the light for every colour.
+  - Avoidance reached 23–94 m, depending on colour, brightness and community.
+  - The unlit instrument alone was avoided at 11–24 m, so the light more than doubled the distance.
+  - Dimming the red light shortened it, from 54–66 m to 37–43 m.
+  - Echosounders did the measuring, so the lights did not bias it.
+
+  The sites were Arctic fjords in the polar night and coastal Newfoundland, so applying this to
+  the Gulf is an extrapolation.
+  *(full text, 3/3; [Geoffroy et al. 2021](https://www.nature.com/articles/s41598-021-94355-6))*
+  The reviewers added that animals kept about 45 m from a lit ROV in Monterey Bay (Benoit-Bird et
+  al. 2023). Responses vary by taxon: a 2022 review cites mesopelagic fish that avoided white,
+  blue and green light but not red.
+- **Far-red is least disturbing, and switching a light on is itself a trigger.** With no vehicle
+  present (a fixed camera in Monterey Canyon), sablefish stayed in view longer under far-red
+  (695 nm) than under red (685 nm) or white light. They often fled at the *onset* of white light,
+  and sometimes at the onset of red. Pacific grenadier did not. *(abstract, confirmed;
+  [Raymond & Widder 2007](https://www.int-res.com/abstracts/meps/v350/p291-298/))* A camera with
+  an infrared-cut filter may see little at 695 nm, so measure yours first.
 - **Speed matters.** A review of 48 demersal taxa found almost all react to underwater vehicles.
   Running an ROV at 0.5 instead of 0.25 m/s cut density estimates by 21–55% for some species.
   *(search; [Stoner et al. 2008](https://cdnsciencepub.com/doi/10.1139/F08-032))*
@@ -62,12 +79,15 @@ is an extrapolation, and says so.
   [Cai et al. 2025](https://arxiv.org/abs/2506.11335), preprint)*
 
 **What the planner does with this.**
-- The lamp stays off whenever the camera can see, and is dim when it cannot (§4). Use far-red if
-  possible.
+- The lamp stays off whenever the camera can see, and is dim and steady when it cannot. It is
+  never switched on suddenly, and not turned up near an animal (§4). Use far-red if possible.
 - Approaches are slow (`controller.max_surge`).
-- An animal that flees is let go rather than chased.
+- An animal that flees is never chased.
 
 ### 1.3 How to search
+
+None of the sources in this section and the next could be opened or verified from here. They are
+leads: the search and filming rules rest on them, on foraging theory, and on the simulator (§7).
 
 - **Find the layer on the first pass, then work it.** On a yo-yo through a layer, MBARI's AUVs find
   the peak on the first crossing and act at that level on the next. A drifting LRAUV followed a
@@ -114,17 +134,21 @@ for animals that flee or never give a good shot.
 
 ### 1.5 JEPA and world models
 
-- **Full latent planning is far too slow for a Pi.** Planning with V-JEPA 2-AC by the
-  cross-entropy method takes about 16 s per action on an RTX 4090. It uses a 300M-parameter
-  predictor on a 1B-parameter encoder, is a goal-image reacher rather than an explorer, and was
-  post-trained on under 62 h of robot video. *(abstract;
-  [Assran et al. 2025](https://arxiv.org/abs/2506.09985))* DINO-WM's cross-entropy plans take
-  tens of seconds on a desktop GPU. *(search; [Zhou et al. 2025](https://arxiv.org/abs/2411.04983))*
-- **The nearest underwater precedent is a preprint.** DINO-Explorer uses a small action-conditioned
-  predictor of frozen DINOv3 features. Its prediction error acts as "semantic surprise", with
-  optical flow discounting the vehicle's own motion, which removed 45.5% of false positives. It
-  was evaluated only for event triage and telemetry, not for closed-loop search, and not onboard.
-  *(abstract; [Jin et al. 2026](https://arxiv.org/abs/2604.12933), preprint)*
+- **Full latent planning is far too slow for a Pi, and it is not an explorer.**
+  - V-JEPA 2-AC plans by the cross-entropy method and takes about 16 s per action on an RTX 4090.
+  - It is model-predictive control toward a goal image, has no curiosity or information-gain
+    objective, and was shown for predictions up to about 16 s.
+  - It uses a 300M-parameter predictor on a 1B-parameter encoder, post-trained on under 62 h of
+    robot video.
+
+  *(paper and code, 3/3; [Assran et al. 2025](https://arxiv.org/abs/2506.09985))* A later version
+  reports about 3 s per action on an A100, still far beyond a Pi. DINO-WM's cross-entropy plans
+  take tens of seconds on a desktop GPU. *(search;
+  [Zhou et al. 2025](https://arxiv.org/abs/2411.04983))*
+- **Latent "surprise" for AUVs is unproven.** A preprint (DINO-Explorer) proposes the prediction
+  error of an action-conditioned latent predictor as an AUV attention signal, with the vehicle's
+  own motion discounted. Its claims were rejected in verification (0–3), so nothing here depends
+  on it. *([arXiv 2604.12933](https://arxiv.org/abs/2604.12933), preprint)*
 - **A cheap novelty bonus.** How far an embedding lies outside the ellipse of embeddings seen so
   far is an exploration bonus that fits embedded compute. *(search;
   [Henaff et al. 2022, E3B](https://arxiv.org/abs/2210.05805))*
@@ -148,16 +172,28 @@ predictor trained on your own dive logs later; no full latent planning on the Pi
   The recorder starts with a file attached and switches in a background thread.
   *(source code;
   [splittableoutput.py](https://github.com/raspberrypi/picamera2/blob/main/picamera2/outputs/splittableoutput.py))*
-- **The Pi 5 has no hardware H.264 encoder.** picamera2 uses software libx264 with the
-  `ultrafast` preset and `zerolatency` tuning. *(source code;
-  [libav_h264_encoder.py](https://github.com/raspberrypi/picamera2/blob/main/picamera2/encoders/libav_h264_encoder.py);
-  docs: [rpicam-vid](https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/camera/rpicam_vid.adoc))*
-- **An unfinished MP4 is unreadable.** A normal MP4 that was never finalized cannot be decoded,
-  which is why segments are MPEG-TS. *(docs;
+- **The Pi 5 has no hardware H.264 encoder.** picamera2 uses software libx264, and Raspberry Pi
+  rate 1080p30 at about 30–40% CPU, on the cores that also run the model. The encoder's thread
+  count can be capped; left alone, x264 uses 6 threads.
+  *(source code and docs, 3/3;
+  [libav_h264_encoder.py](https://github.com/raspberrypi/picamera2/blob/main/picamera2/encoders/libav_h264_encoder.py),
+  [rpicam-vid](https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/camera/rpicam_vid.adoc))*
+- **A write error silently ends a picamera2 recording.** If writing a frame fails (a full card),
+  `PyavOutput` closes its file and drops every later frame unless an error callback is set. The
+  recorder sets one and switches to a new segment. *(source code, 3/3)*
+- **An unfinished MP4 is unreadable, and closed files need a sync.** A normal MP4 that was never
+  finalized cannot be decoded, while a fragmented MP4 plays up to its last fragment. Segments here
+  are MPEG-TS, which has no index to finalize; the reviewers did not test its crash behaviour.
+  Nothing in FFmpeg calls `fsync`, and Linux can hold about 30 s of written data in memory, so the
+  recorder syncs each closed segment itself. *(docs and a reproduction, 3/3;
   [FFmpeg muxers](https://github.com/FFmpeg/FFmpeg/blob/master/doc/muxers.texi))*
-- **Other Pi cameras leave gaps.** FishCam, a Raspberry Pi underwater camera, restarts the camera
-  for every file, leaving gaps of about 2 s. For continuous recording it recommends
-  high-endurance microSD cards. *(docs; [FishCam](https://github.com/xaviermouy/FishCam))*
+- **What other Pi cameras get wrong.** FishCam, a Raspberry Pi underwater camera:
+  - rebuilds the camera for every file, losing at least 2 s each time;
+  - stops for good after 5 errors in a row, because nothing restarts it.
+
+  Worth copying are its filenames that carry the settings, and its per-frame metadata. For
+  continuous recording it recommends high-endurance microSD cards.
+  *(source code, 3/3; [FishCam](https://github.com/xaviermouy/FishCam))*
 
 ### 1.7 What could not be established
 
@@ -294,17 +330,20 @@ use as little light as possible, but enough to see.
 
 - **Searching, when the camera can see by ambient light** (a lake by day, the upper twilight zone
   by day): lamp off (`lights.search: 0.0`).
-- **Searching, when it cannot** (night, or deep enough that the picture is black): a dim level,
-  `lights.search_dark: 0.3`.
+- **Searching, when it cannot** (night, or deep enough that the picture is black): a dim, steady
+  level, `lights.search_dark: 0.3`.
   - "Cannot see" means the frame's mean brightness with the lamp off is below `dark_luma` (0.08).
     With auto-exposure, a scene the camera can expose sits near the exposure target, so a mean
     far below it means exposure and gain are at their limits.
   - It is only measured with the lamp off and settled for `settle_s` (1 s), so the lamp's own
     light never counts.
-  - While the lamp is on for darkness, it is switched off every `check_s` (2 min) for
-    `check_len_s` (3 s) to see whether ambient light is back (dawn, shallower water). Switching a
-    lamp *off* does not disturb animals.
-- **Close to an animal** (apparent size ≥ `near_size`): `lights.track: 0.3`.
+  - While the lamp is on for darkness, it is switched off every `check_s` (5 min) for
+    `check_len_s` (3 s) to see whether ambient light is back (dawn, shallower water). This happens
+    only while searching, never while filming.
+- **Close to an animal: no change** (`lights.track: null`). Light coming on is itself what makes
+  fish flee (§1.2), so the lamp is not switched on or up near an animal. Set `track` to a level
+  to raise it anyway, for example for colour in footage.
+- **Never a sudden switch-on.** Every increase is ramped over `ramp_s` (5 s, from off to full).
 - **Use far-red** if you can.
 - **`dark_luma` is a first guess.** Check it on the vehicle: the telemetry's `lights.ambient` shows
   the measured brightness, and `lights.dark` the decision.
@@ -315,7 +354,12 @@ use as little light as possible, but enough to see.
 
 Video is recorded continuously for the whole run and is never switched off (docs/PI5.md §6), so
 nothing depends on the vehicle predicting the right moment. The encounter log indexes each animal
-into the segments by file and time offset.
+into the segments by file and time offset. What §1.6 found is built in:
+- one encoder runs for the whole dive, and its output is switched between files at keyframes;
+- a write error moves recording to a fresh file within seconds instead of silently ending it;
+- closed files are synced to storage;
+- the encoder's threads are capped, so it leaves CPU for the model;
+- systemd restarts the app if it ever stops.
 
 ## 6. JEPA and world models: what is used, what is realistic
 
@@ -325,9 +369,10 @@ into the segments by file and time offset.
     for exploration in reinforcement learning (E3B, §1.5).
   - The patch tokens give each animal an appearance descriptor, used to recognise animals already
     filmed and to weight novel ones.
-- **Realistic next.**
-  - Ego-motion-compensated "surprise", with the gyro as the efference copy: prediction error of
-    the next embedding, discounting the vehicle's own turning.
+- **Possible, but unproven.**
+  - "Surprise" as the prediction error of the next embedding, discounting the vehicle's own
+    turning with the gyro. It has been proposed for AUVs, but those claims did not survive
+    verification (§1.5). Test it offline on your dive logs before letting it steer.
   - A tiny action-conditioned latent predictor trained on your own dive logs (embeddings plus
     commands). It could score a few candidate headings one step ahead.
 - **Not realistic on a Pi 5.** Full latent planning in the style of V-JEPA 2-AC or DINO-WM, which

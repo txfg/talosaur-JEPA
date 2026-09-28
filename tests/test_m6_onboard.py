@@ -306,6 +306,7 @@ def fake_picamera2(monkeypatch):
     class H264Encoder:
         def __init__(self, bitrate=None, repeat=True, iperiod=None, framerate=None):
             self.bitrate, self.iperiod, self.framerate = bitrate, iperiod, framerate
+            self.threads = 0  # like picamera2's LibavH264Encoder: 0 = let x264 choose
             made["encoder"] = self
 
     class FileOutput:
@@ -326,6 +327,7 @@ def fake_picamera2(monkeypatch):
     class PyavOutput:  # like picamera2's: the container file is opened on start()
         def __init__(self, output_name, format=None, pts=None, options=None):
             self.name, self.format, self.started, self.stopped = output_name, format, False, False
+            self.error_callback = None  # picamera2 calls it when writing a frame fails
 
         def start(self):
             Path(self.name).write_bytes(b"\x47" * 188)  # one MPEG-TS packet's worth
@@ -419,10 +421,31 @@ def _continuous(fake_picamera2, tmp_path, **kw):
     return ContinuousRecorder(fake_picamera2["cam"], tmp_path / "rec", fps=15, segment_s=10, t0=0.0, **kw)
 
 
-def _run_clock(rec, t_end: float, dt: float = 0.5):
-    for t in np.arange(0.0, t_end, dt):
+def _run_clock(rec, t_end: float, dt: float = 0.5, t_start: float = 0.0):
+    for t in np.arange(t_start, t_end, dt):
         rec.tick(float(t))
         rec.wait_rotation()
+
+
+def test_continuous_recorder_recovers_from_a_write_error_and_syncs_closed_files(
+    fake_picamera2, tmp_path, monkeypatch
+):
+    import talosaur.onboard.recorder as recorder_mod
+
+    synced = []
+    monkeypatch.setattr(recorder_mod, "_fsync", lambda path: synced.append(Path(path).name))
+    rec = _continuous(fake_picamera2, tmp_path, retry_s=2.0)
+    assert fake_picamera2["encoder"].threads == 2  # the encoder leaves cores to the model
+    _run_clock(rec, 12.0)  # a normal switch at 10 s: the closed segment is synced
+    assert len(rec.segments) == 2 and synced == [rec.segments[0]["path"].name]
+    # the card fills up: picamera2's PyavOutput closes its file and calls the error callback
+    rec.split.output.error_callback(OSError("No space left on device"))
+    assert rec.write_failed and rec.errors == 1
+    _run_clock(rec, 13.0, t_start=12.0)  # switches to a fresh segment at once, not at 20 s
+    assert len(rec.segments) == 3 and not rec.write_failed and rec.recording
+    assert synced[-1] == rec.segments[1]["path"].name
+    events = [json.loads(line)["event"] for line in rec.index_path.read_text().splitlines()]
+    assert events == ["closed", "closed_after_error"]
 
 
 def test_continuous_recorder_never_stops_and_maps_encounters_to_files(fake_picamera2, tmp_path):

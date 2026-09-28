@@ -82,6 +82,7 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
                     fmt=rc.get("format", "mpegts"),
                     min_free_mb=float(rc.get("min_free_mb", 2000)),
                     low_disk=rc.get("low_disk", "delete_empty"),
+                    encoder_threads=rc.get("encoder_threads", 2),
                 )
             else:
                 recorder = Picamera2Recorder(
@@ -90,6 +91,7 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
                     int(rc.get("bitrate", 6_000_000)),
                     float(rc.get("preroll_s", 5.0)),
                     float(sc.get("fps", 15)),
+                    encoder_threads=rc.get("encoder_threads", 2),
                 )
         except Exception:
             source.close()  # release the camera, or the next start fails with "device busy"
