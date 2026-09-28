@@ -391,7 +391,7 @@ driving a simulated vehicle and camera. The world is a caricature of the twiligh
   about 40 within 8 m, which move together.
 - **Species.**
   - Lanternfish, shrimp and squid migrate. They flee from the vehicle at 1.5–3 m, and from up to
-    15–20 m further away with the lamp at full.
+    15–20 m further away with the lamp at full, each time in one 5 s burst.
   - Medusae and siphonophores stay at their depths and do not react.
 - **Camera.** It sees animals out to 2 m with the lamp off and 5 m at full, fewer if small or far.
   It shows a false speck of "marine snow" every 50 frames.
@@ -403,56 +403,64 @@ driving a simulated vehicle and camera. The world is a caricature of the twiligh
 Every number is an assumption. Take the *ranking* of settings from it, not the values.
 
 The results below are the mean ± standard error over simulated worlds; every setting ran in the
-same worlds. Each run is in `reports/sim/compare.jsonl`; `python scripts/sim_compare.py` repeats
-the comparison (about 45 min on 4 cores).
+same worlds. The code is commit da35258. Each run is in `reports/sim/compare.jsonl`;
+`python scripts/sim_compare.py` repeats the comparison (about 45 min on 4 cores).
 
-**Where to search, and with how much light** (0.01 animals per m³, the leave rule of §3):
+**Where to search** (0.01 animals per m³, the leave rule of §3):
 
 | search strategy | lamp while searching | night, from 21:00 | dusk, from 18:18 |
 |---|---|---|---|
 | turn in place (the previous behaviour) | off | 0.2 ± 0.2 | 0.0 ± 0.0 |
-| turn in place | 0.5 | 2.7 ± 0.3 | 0.2 ± 0.2 |
-| horizontal legs only | 0.5 | 6.4 ± 0.3 | 3.3 ± 0.8 |
-| depth bands only | 0.5 | 4.1 ± 0.3 | 2.1 ± 0.2 |
-| **adaptive (default)** | off | 1.8 ± 0.2 | 1.3 ± 0.7 |
-| **adaptive (default)** | **0.5** | **7.0 ± 0.7** | **4.0 ± 0.9** |
-| **adaptive (default)** | 1.0 | 6.2 ± 1.3 | 3.1 ± 0.8 |
+| turn in place | 0.5 | 3.4 ± 0.8 | 0.8 ± 0.5 |
+| horizontal legs only | 0.5 | 6.6 ± 0.8 | 3.9 ± 0.5 |
+| depth bands only | 0.5 | 7.2 ± 1.0 | 3.1 ± 0.7 |
+| **adaptive (default)** | off | 2.0 ± 0.6 | 0.7 ± 0.3 |
+| **adaptive (default)** | **0.5** | **6.6 ± 0.6** | **5.3 ± 0.6** |
+| adaptive | 1.0 | 10.7 ± 0.8 | 4.8 ± 0.2 |
 
-4 worlds each. Distinct animals well filmed per hour follow the same order: the adaptive
-planner with a dim lamp filmed 8.0 per hour at night, against 3.2 for turning in place.
+4 worlds each. Distinct animals well filmed per hour follow the same order. With a lamp of 0.5,
+the adaptive planner filmed 7.5 per hour at night and 6.0 at dusk; turning in place filmed 3.7
+and 1.0.
 
 **How long to film each animal** (adaptive search, lamp 0.5, night):
 
 | rule | scarce (0.003/m³, 8 worlds) | plentiful (0.03/m³, 4 worlds) | good footage per animal (scarce / plentiful) |
 |---|---|---|---|
-| fixed 60 s | 2.3 ± 0.4 | 11.8 ± 0.6 | 56 s / 49 s |
-| fixed 180 s | 2.4 ± 0.3 | 9.8 ± 0.7 | 135 s / 129 s |
-| **leave rule, `tau_s` 30 s (default)** | **3.1 ± 0.4** | **13.0 ± 0.6** | 90 s / 57 s |
-| leave rule, `tau_s` 20 s | 2.9 ± 0.5 | 12.7 ± 0.8 | 68 s / 42 s |
+| fixed 60 s | 2.8 ± 0.3 | 14.7 ± 1.0 | 52 s / 49 s |
+| fixed 180 s | 2.3 ± 0.3 | 11.7 ± 1.2 | 157 s / 132 s |
+| **leave rule, `tau_s` 30 s (default)** | **3.0 ± 0.4** | **14.8 ± 0.1** | 90 s / 58 s |
+| leave rule, `tau_s` 20 s | 3.1 ± 0.3 | 12.8 ± 1.2 | 66 s / 49 s |
 
-**Navigation input** (adaptive, lamp 0.5, night, 0.01/m³): with depth and heading 7.0 ± 0.7;
-without (scan and hop) 4.1 ± 0.5.
+**Navigation input** (adaptive, lamp 0.5, night, 0.01/m³): with depth and heading 6.6 ± 0.6;
+without (scan and hop) 4.1 ± 0.9.
 
 **What this says:**
 
-1. **Move rather than turn in place.** The previous behaviour found almost nothing at dusk (0.2);
-   the adaptive planner found 4.0. Paired over the same worlds, adaptive beat turning in place by
-   4.3 ± 0.7 at night and 3.8 ± 0.9 at dusk.
-2. **Depth and horizontal search together work best, above all at dusk,** when the layer moves:
-   4.0 against 3.3 for legs alone. At night, with the layer near the starting depth, legs alone
-   come close (6.4 against 7.0).
-3. **In the simulator a dim lamp beats none, and full brightness is no better than dim.** With the
-   lamp at 1.0, more animals fled, so there were three to five times as many, much shorter
-   encounters. This depends on the camera; see the caveats below.
-4. **The leave rule beat both fixed budgets where animals were scarce and where they were
-   plentiful.**
-   - Paired against fixed 60 s: +0.9 ± 0.5 scarce, +1.2 ± 0.5 plentiful.
-   - Paired against fixed 180 s: +0.7 ± 0.3 scarce, +3.3 ± 0.6 plentiful.
-   - It gets there by adapting: longer on scarce animals (90 s of good footage each), shorter on
-     plentiful ones (57 s).
-   - A fixed budget has to be tuned to a density you do not know in advance.
-   - `tau_s` 20 s against 30 s made no measurable difference here.
-5. **Give the Pi depth and heading.** They raised the score by 2.9 ± 0.8 (about 1.7×).
+1. **Move rather than turn in place.** The previous behaviour found almost nothing at dusk (0.8
+   against 5.3). Paired over the same worlds, the adaptive planner beat turning in place by
+   3.1 ± 0.8 at night and 4.5 ± 0.3 at dusk.
+2. **Depth and horizontal search together matter most when the layer moves.** At dusk the
+   adaptive planner scored 5.3, against 3.9 for legs alone and 3.1 for depth bands alone. At
+   night, with the layer near the starting depth, the three are within noise of each other
+   (6.6–7.2).
+3. **The leave rule matched the best fixed budget without being tuned to the density.**
+   - It was within noise of fixed 60 s where animals were scarce (+0.1 ± 0.4) and where they
+     were plentiful (+0.1 ± 1.0).
+   - It beat fixed 180 s by 0.7 ± 0.3 and 3.1 ± 1.2.
+   - It did this by adapting: 90 s of good footage on each scarce animal, 58 s on each
+     plentiful one. A fixed budget has to be tuned to a density you do not know before the dive.
+   - An earlier run, with the lamp dimmed near animals, put the rule about 1 point ahead of
+     fixed 60 s. Treat differences of that size as noise.
+4. **Give the Pi depth and heading.** They raised the score by 2.5 ± 0.5 (about 1.6×).
+5. **Lamp: some light beats none, but the simulator cannot say how much.**
+   - A lamp of 0.5 beat none by 4.6 ± 1.1 at night and 4.6 ± 0.8 at dusk.
+   - Full brightness scored higher still at night, and it kept doing so with the light-avoidance
+     distance tripled to 60 m: 12.6 at full, 6.5 at 0.5 and 4.6 at 0.3.
+   - The reason is how simulated animals flee: once, in a short burst, after which they tolerate
+     the light. In the field trials of §1.2, density near a light stayed down by more than 90%
+     for whole 10-minute trials, and a light coming on was itself a trigger to flee.
+   - So the lamp defaults (off when the camera can see, dim and steady when it cannot) follow
+     the field evidence, not the simulator. Tune them from the dive report's lamp log.
 
 **The simulator found three bugs, each fixed and covered by a test:**
 
@@ -472,10 +480,9 @@ without (scan and hop) 4.1 ± 0.5.
   bioluminescence is enough. At 100–200 m at night a real camera probably sees nothing. Lamp-off
   search would then find nothing at all, which is why the lamp rule (§4) measures the picture
   rather than assuming.
-- **Avoidance distances.** The simulated animals avoid the lamp at up to 20 m, but echosounders
-  measured 23–94 m (§1.2), so light may cost more than simulated.
-- **Flight.** Simulated animals flee in 5 s bursts and then settle; real ones may keep going.
-- **Densities and species** are guesses.
+- **Flight and light avoidance.** Both are single bursts in the simulator; real avoidance is
+  sustained and starts further away (§1.2).
+- **Densities, patches and species** are guesses.
 - **Timing.** Migration in the simulator is symmetric around sunrise and sunset, unlike the planner's
   evidence-based windows (§2). The dusk runs start inside both.
 - **Noise.** With 4–8 worlds per setting, differences under about 1 value per hour are within noise.
@@ -484,4 +491,3 @@ without (scan and hop) 4.1 ± 0.5.
 dive's logs (docs/PI5.md §15). The finds per minute in each depth band, the encounter durations
 and reasons, and the ambient brightness it reports are the numbers to put back into the planner,
 the leave rule and the lamp rule.
-
