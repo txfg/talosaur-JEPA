@@ -33,6 +33,7 @@ class TrackState:
     size: float = 0.0
     yaw_rate: float = 0.0
     pitch_rate: float = 0.0
+    size_rate: float = 0.0  # d(log apparent size)/dt: > 0 closing in, < 0 receding (1/time-to-contact)
     confidence: float = 0.0
     hits: int = 0
     misses: int = 0
@@ -97,6 +98,7 @@ class TargetTracker:
         st.yaw, st.pitch = float(self.x[0]), float(self.x[1])
         st.size = float(math.exp(self.x[2]))
         st.yaw_rate, st.pitch_rate = float(self.x[3]), float(self.x[4])
+        st.size_rate = float(self.x[5])
         st.confidence = float(
             min(1.0, st.hits / (c.confirm_hits + 2)) * (1.0 - st.misses / (c.max_misses + 1))
         )

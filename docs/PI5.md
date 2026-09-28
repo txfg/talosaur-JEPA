@@ -13,9 +13,10 @@ flowchart LR
   cam["Camera Module 3 Wide<br/>(IMX708)"] --> isp["Pi 5 ISP"]
   isp -- "lores 208×112 YUV420" --> rgb["YUV→RGB<br/>preprocess"]
   rgb --> model["ViT-Ti + heads<br/>ORT int8 / ncnn fp16"]
-  model -- "frame logit, heatmap, embedding" --> guid["guidance<br/>target → bearing → Kalman → FSM → controller"]
+  model -- "frame logit, heatmap, patch tokens" --> guid["guidance<br/>target → bearing → Kalman → FSM → controller<br/>+ search planner"]
   guid -- "JSONL / UDP JSON" --> ap["autopilot bridge<br/>(your choice, pending)"]
-  guid -- "start/stop events" --> rec["H.264 recorder<br/>(software, pre-roll ring buffer)"]
+  ap -- "depth, heading (UDP JSON)" --> guid
+  guid -- "encounter events" --> rec["H.264 recorder<br/>(software, continuous segments)"]
   isp -- "main 1280×720 YUV420" --> rec
 ```
 
@@ -166,27 +167,70 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
  "frame_prob": 0.93, "novelty": 1.1, "recording": true, "events": [],
  "target": {"found": true, "cx": 0.62, "cy": 0.44, "size": 0.18, "mass": 3.1, "peak": 0.97, "n_blobs": 1, "yaw": 8.9, "pitch": 3.1},
  "track": {"active": true, "confirmed": true, "yaw": 8.5, "pitch": 2.9, "size": 0.18, "yaw_rate": 4.2, "pitch_rate": -0.3, "confidence": 1.0, "hits": 23, "misses": 0},
- "cmd": {"yaw_rate": 0.25, "heave": 0.03, "surge": 0.12}}
+ "cmd": {"yaw_rate": 0.25, "heave": 0.03, "surge": 0.12, "heading_deg": null, "depth_m": null, "light": 0.3}}
 ```
 
 **Conventions.**
 - `target.cx/cy` are normalised image coordinates, with (0, 0) at the top left.
 - `yaw` > 0: the target is right of centre. `pitch` > 0: above centre. Both are degrees in the water.
 - `size` is √(area fraction) of the animal's blob.
-- `cmd` values are normalised requests in [-1, 1]:
+- `cmd` rates are normalised requests in [-1, 1], always set:
   - `yaw_rate` > 0 = turn right;
   - `heave` > 0 = ascend;
   - `surge` > 0 = forward, < 0 = back off.
-- `state` is one of SEARCH, ACQUIRE, TRACK, FILM, LOST and RELEASE (moving on after an animal's time budget, §12).
+- `cmd` setpoints are optional, for an autopilot with heading and depth hold:
+  - `heading_deg`: hold this heading. Set on search legs, and while turning away in RELEASE.
+  - `depth_m`: go to and hold this depth. Set while searching.
+  - A bridge that cannot use them ignores them: the rates already steer toward them whenever
+    navigation input (below) is available.
+- `cmd.light` is the lamp level, 0 to 1 (docs/SEARCH.md §4): off while searching if the camera can
+  see by ambient light, dim if it cannot, and the `track` level close to an animal. `null` means
+  guidance leaves the lights to the vehicle (`lights.control: false`). `lights` shows the decision:
+  `dark`, the measured ambient brightness (`ambient`, 0–1, measured with the lamp off), and
+  whether a lamp-off check is running.
+- `state` is one of SEARCH, ACQUIRE, TRACK, FILM, LOST and RELEASE (moving on from an animal, §12).
 - `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame. The recording events mark where an encounter clip begins and ends; only events mode cuts files at them.
 - `recording` says whether video is being written. It is always true in continuous mode unless the disk guard had to stop.
-- `encounter` (`id`, `engaged_s`, `remaining_s`) is the animal being filmed. `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
+- `encounter` is the animal being filmed:
+  - `id` and `engaged_s`;
+  - `remaining_s` under the hard cap;
+  - `good_s`: seconds well framed;
+  - `marginal_rate` and `long_run_rate`: what staying earns now against what the mission earns on
+    average. The animal is left when the first falls below the second (§12).
+- `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
+- `nav` echoes the navigation input in use (below). `search`, during SEARCH only, shows the search
+  mode (`profile`, `extensive` or `intensive`), the depth band being worked, the leg heading, and the
+  band with the best detection rate so far.
 - At the end of each encounter, a `kind: "encounter"` message summarises it (§12).
+
+**Navigation input (optional, strongly recommended).** The search planner (docs/SEARCH.md) needs
+depth and heading from the vehicle. The autopilot bridge sends them as small JSON datagrams to UDP
+port 14601, at 5–50 Hz:
+
+```json
+{"depth_m": 152.3, "heading_deg": 41.0, "yaw_rate_dps": -2.5, "altitude_m": null}
+```
+
+- Enable it with `nav: {kind: udp, port: 14601}` in `pi5.yaml`.
+- Any field may be missing or `null`. Heading may be magnetic or gyro-integrated; it only has to be
+  consistent during the dive.
+- A sample older than 1.5 s (`nav.valid_for_s`) is treated as missing.
+- Without navigation input, search falls back to a scan-then-hop pattern with no depth control.
+- `kind: mavlink` raises `NotImplementedError` until the autopilot is chosen.
+
+Test the link from a laptop on the same network. The telemetry's `nav` field shows the sample for
+1.5 s:
+
+```bash
+python3 -c 'import json, socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(
+    json.dumps({"depth_m": 120, "heading_deg": 90}).encode(), ("<pi-address>", 14601))'
+```
 
 **Safety stays with the autopilot.** Depth and altitude limits, obstacle avoidance, leak and
 battery failsafes all belong there. Vision only sends requests, already clipped, slew-limited and
-with a hard stand-off. The bridge should treat a message older than ~0.5 s (by receive time) as
-"all zero", so a crashed or stalled vision process never leaves a stale command active.
+with a hard stand-off. `search.min_depth_m` / `max_depth_m` only bound the depths the planner asks
+for; they are not a safety limit. The bridge should treat a message older than ~0.5 s (by receive
+time) as "all zero", so a crashed or stalled vision process never leaves a stale command active.
 
 ## 6. Recording
 
@@ -314,47 +358,67 @@ Knobs in `pi5.yaml` → `guidance:`:
 Keep the vehicle's own turn rate in mind. Replay is open loop: the recorded camera does not turn
 toward the target, so a target crossing the frame never looks centred for long.
 
-## 12. One animal at a time: time budget, moving on, not filming the same fish twice
+## 12. One animal at a time: when to move on, not filming the same fish twice
 
-Each animal gets a time budget. When it is used up, the sub stops documenting that animal, moves
-away, and looks for a *different* one. Settings are under `guidance.encounter` in `pi5.yaml`.
+The sub decides for each animal when more footage of it is worth less than going to find another.
+Then it stops documenting that animal, moves away, and looks for a *different* one. Settings are
+under `guidance.encounter` in `pi5.yaml`; the reasoning and evidence are in docs/SEARCH.md §3.
 
 1. **Encounter.** Locking onto an animal (ACQUIRE → TRACK) starts an encounter with a new id. In the
    default continuous mode the video is already running; in events mode a clip starts.
-2. **Budget** (`max_s`, default 60 s). Time in TRACK, FILM and LOST counts. When it is used up, the
-   state machine enters **RELEASE**:
+2. **When to leave** (`rule: mvt`, the default). Time in TRACK, FILM and LOST counts. The sub leaves
+   for one of four reasons:
+   - `enough`: the animal has been well framed long enough that more footage is worth less than
+     searching on. How long that is depends on how easy animals have been to find so far, and on
+     how different this one is from those already filmed.
+   - `fled`: it is swimming away (its apparent size shrinks fast for `flee_s` while the sub is not
+     backing off). Chasing it only disturbs it.
+   - `no_shot`: no good shot within `giveup_s` (30 s), or it was never well framed and the rule
+     gave up on it sooner.
+   - `budget`: the hard cap `max_s` (180 s) is reached.
+
+   Nothing ends an encounter before `min_s` (10 s) except `fled`. `rule: fixed` keeps only the
+   hard cap, as before this change.
+3. **RELEASE.** On leaving, the state machine enters RELEASE:
    - the video keeps running in continuous mode, and the encounter log marks where this animal is
      in it; in events mode the clip stops after its post-roll;
    - the sub backs off (`controller.release_backoff_s`);
-   - it turns away from the side the animal was on (`release_turn_s`);
+   - it turns away from the side the animal was on: `release_turn_deg` (120°) with a heading input,
+     otherwise for `release_turn_s`;
    - it swims on for the rest of `fsm.release_s` (default 12 s);
-   - detections are ignored meanwhile; then SEARCH resumes.
-3. **Recognising animals already filmed, by appearance rather than position.** Underwater position
+   - detections are ignored meanwhile; then SEARCH resumes with a tight local search, because
+     animals come in patches (docs/SEARCH.md §2).
+4. **Recognising animals already filmed, by appearance rather than position.** Underwater position
    is unreliable, so it isn't used. The model exports its per-patch features (`patch_tokens`).
    The sub averages them over the animal's heatmap blob, subtracts the average background (water)
    features, and compares the result with each remembered animal by cosine similarity:
-   - **Budget already spent** (similarity ≥ `same_sim`): the animal is ignored for `cooldown_s`
-     (default 5 min), even while it stays in view. If another animal is in view at the same time,
-     that one is chosen instead.
-   - **Only lost** (it swam out of view before its budget ran out): it is **resumed** with the time
-     it has left. A fish that keeps coming and going is still filmed for at most `max_s` in total.
-4. **Encounter log.** Every encounter is written to `logs/encounters.jsonl`, and also sent as a
+   - **Already left on purpose** (similarity ≥ `same_sim`, and the encounter ended for one of the
+     four reasons above): the animal is ignored for `cooldown_s` (default 5 min), even while it
+     stays in view. If another animal is in view at the same time, that one is chosen instead.
+   - **Only lost** (it swam out of view first): it is **resumed** with the footage it already has,
+     so its value keeps diminishing where it left off. A fish that keeps coming and going is still
+     filmed for at most `max_s` in total.
+   - **New-looking animals are worth more.** The less an animal resembles any filmed so far on
+     this run, the higher its footage is valued (up to 2× with `novelty_bonus: 1.0`), so it gets
+     more time.
+5. **Encounter log.** Every encounter is written to `logs/encounters.jsonl`, and also sent as a
    `kind: "encounter"` message on the backends. Each line records:
    - the animal's id;
-   - why it ended (`budget`, `lost`, or `shutdown`);
-   - total time on that animal;
-   - time well framed (FILM);
+   - why it ended (`enough`, `fled`, `no_shot`, `budget`, `lost` or `shutdown`);
+   - total time on that animal (`engaged_s`), time well framed (`good_s`) and time in FILM;
+   - the footage value it was credited with, and its novelty weight;
    - the best-framed moment (`best_t`);
-   - the video files.
+   - the video files, with the offset into the first one.
 
    ```json
-   {"kind": "encounter", "id": 3, "reason": "budget", "engaged_s": 60.1, "film_s": 22.4,
-    "resumed": true, "best_t": 431.7, "recordings": ["recordings/talosaur_20261003_101512_004.h264"]}
+   {"kind": "encounter", "id": 3, "reason": "enough", "engaged_s": 71.3, "good_s": 52.0,
+    "value": 1.21, "novelty_weight": 1.47, "film_s": 44.8, "resumed": true, "best_t": 431.7,
+    "recordings": [{"file": "recordings/talosaur_20261003_101512_00002.ts", "offset_s": 131.2}]}
    ```
 
 **Limits and calibration.**
 - **Look-alikes.** Appearance separates animals that *look* different. Two fish of the same species
-  and size (a school) look the same, so after one budget the sub leaves the whole school alone for
+  and size (a school) look the same, so after filming one the sub leaves the whole school alone for
   `cooldown_s`.
 - **Threshold.** `same_sim: 0.8` is a starting guess; the right value depends on the trained model.
   To set it:
@@ -363,12 +427,13 @@ away, and looks for a *different* one. Settings are under `guidance.encounter` i
   2. Set `same_sim` between the two groups of values.
 
   On the toy model, a returning fish scores ~1.0 and a differently coloured fish 0.67.
-- **Manoeuvre.** The move-on manoeuvre is timed (seconds of turning, not degrees) until the vehicle's
-  turn rate is calibrated.
+- **Manoeuvre.** Without a heading input, the move-on turn is timed (seconds of turning, not
+  degrees) until the vehicle's turn rate is calibrated.
 - **Older exports.** Exports made before this change have no patch tokens. The sub still moves on
-  after each budget but cannot recognise animals, and the app warns at start. Re-export with
+  from each animal but cannot recognise animals or weight novel ones, and the app warns at start. Re-export with
   `scripts/export.py`. The parity report's `token cos` column shows that int8 keeps these features.
-- **No limit.** `max_s: 0` disables the budget: follow indefinitely, as before.
+- **No limit.** `max_s: 0` removes the hard cap; the leave rule still decides. To follow one animal
+  indefinitely, set `rule: fixed` and `max_s: 0`.
 
 ## 13. Optional: ncnn int8
 
@@ -404,9 +469,17 @@ with replay on labelled clips, or with `scripts/eval.py`.
 4. The in-water calibration workflow and the flat-port focus rule of thumb.
 5. Camera controls in the dark: gain limits and noise at depth.
 6. **Recognising animals with the trained model** (§12). Tested only with synthetic features and the toy model's colours. How well JEPA patch tokens separate real animals, and the right `same_sim`, must come from your footage.
+7. **Search and leave-rule settings** (docs/SEARCH.md). Tested only in the simulator, whose animal
+   densities, detection ranges and reactions to the vehicle are assumptions. In particular:
+   - what the camera detects with the lights off at your depths (`lights.search: 0.0` relies on it);
+   - the vehicle's real speed per unit of `surge` (`search.speed_mps_per_unit`), for the coverage map;
+   - how well the autopilot holds the heading and depth setpoints.
 
 ## 15. What to send back
 
 - `reports/pi5/bench_idle.md`, `bench_rec.md` and `bench_sustained.md`, plus their `.json` files.
 - `free -m` output with the app idle in SEARCH, and while recording.
 - One short pool clip with the toy or trained model, plus its `logs/guidance.jsonl` and `logs/encounters.jsonl`. Replay it on the desktop to tune.
+- From the first dives: `logs/guidance.jsonl` and `logs/encounters.jsonl` with navigation input on.
+  The detections per depth band and the encounter values replace the simulator's assumptions
+  (docs/SEARCH.md §7).

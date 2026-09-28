@@ -36,19 +36,35 @@ class ControllerConfig:
     # until a vehicle calibration turns these into angles and distances.
     release_backoff_s: float = 1.5
     release_reverse: float = 0.2
-    release_turn_s: float = 4.0
+    release_turn_s: float = 4.0  # without a heading input: turn this long ...
+    release_turn_deg: float = 120.0  # ... with one: turn this far away from the animal
     release_yaw: float = 0.6
     release_surge: float = 0.3
+    heading_kp: float = 0.02  # yaw command per degree of heading error (heading setpoints)
 
 
 @dataclass
 class Command:
+    """Normalised rate requests (always set), plus optional setpoints for an autopilot with
+    heading / depth hold (search legs and depth bands). A bridge that cannot use a setpoint
+    ignores it: the rates already steer toward it when navigation data is available."""
+
     yaw_rate: float = 0.0
     heave: float = 0.0
     surge: float = 0.0
+    heading_deg: float | None = None
+    depth_m: float | None = None
+    light: float | None = None  # lamp level 0-1; None = leave the lights to the vehicle
 
     def as_dict(self) -> dict:
-        return {"yaw_rate": self.yaw_rate, "heave": self.heave, "surge": self.surge}
+        return {
+            "yaw_rate": self.yaw_rate,
+            "heave": self.heave,
+            "surge": self.surge,
+            "heading_deg": self.heading_deg,
+            "depth_m": self.depth_m,
+            "light": self.light,
+        }
 
 
 def _clip(v: float, lo: float, hi: float) -> float:
@@ -73,9 +89,15 @@ class Controller:
             lim(cmd.yaw_rate, self.last.yaw_rate),
             lim(cmd.heave, self.last.heave),
             lim(cmd.surge, self.last.surge),
+            cmd.heading_deg,  # setpoints pass through (the autopilot's own loops shape them)
+            cmd.depth_m,
         )
         self.last = out
         return out
+
+    def shape(self, cmd: Command, t: float) -> Command:
+        """Apply the slew limit to a command made elsewhere (e.g. the search planner)."""
+        return self._slew(cmd, t)
 
     def track(self, st: TrackState, t: float, approach: bool = True) -> Command:
         c = self.cfg
@@ -107,12 +129,25 @@ class Controller:
     def hold(self, t: float) -> Command:
         return self._slew(Command(), t)
 
-    def release(self, t: float, elapsed: float, away: float) -> Command:
+    def release(
+        self,
+        t: float,
+        elapsed: float,
+        away: float,
+        heading: float | None = None,
+        heading_sp: float | None = None,
+    ) -> Command:
         """Move on from an animal: back off, turn toward ``away`` (+1 right / -1 left, i.e. away
-        from the side the animal was on), then swim on (the rest of the RELEASE state)."""
+        from the side the animal was on), then swim on (the rest of the RELEASE state). With a
+        heading input the turn goes to ``heading_sp`` (``release_turn_deg`` away); without one it
+        is timed (``release_turn_s``)."""
         c = self.cfg
         if elapsed < c.release_backoff_s:
             cmd = Command(0.0, 0.0, -c.release_reverse)
+        elif heading is not None and heading_sp is not None:
+            err = (heading_sp - heading + 180.0) % 360.0 - 180.0
+            yaw = _clip(c.heading_kp * err, -c.release_yaw, c.release_yaw)
+            cmd = Command(yaw, 0.0, c.release_surge if abs(err) < 20.0 else 0.0, heading_deg=heading_sp)
         elif elapsed < c.release_backoff_s + c.release_turn_s:
             cmd = Command(math.copysign(c.release_yaw, away), 0.0, 0.0)
         else:

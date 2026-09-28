@@ -38,10 +38,11 @@ guidance:                           # tuning guide: docs/PI5.md section 11
   controller:
     target_size: 0.22               # desired apparent size (sqrt of area fraction)
     standoff_size: 0.40             # back off above this
-    max_surge: 0.4
+    max_surge: 0.4                  # keep approaches slow (~0.25 m/s disturbs animals less than 0.5 m/s; docs/SEARCH.md)
     max_yaw: 0.8
     release_backoff_s: 1.5          # moving on from an animal: back off this long ...
-    release_turn_s: 4.0             # ... then turn away from it this long ...
+    release_turn_deg: 120           # ... then turn this far away from it (with a heading input) ...
+    release_turn_s: 4.0             # ... or this long (without one) ...
     release_yaw: 0.6
     release_surge: 0.3              # ... then swim on for the rest of fsm.release_s
   fsm:
@@ -52,11 +53,38 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     lost_timeout_s: 4.0
     postroll_s: 3.0
     release_s: 12.0                 # length of the move-on manoeuvre (detections are ignored meanwhile)
-  encounter:                        # one animal at a time, then find a different one (docs/PI5.md section 12)
-    max_s: 60                       # film each animal for at most this long in total; 0 = no limit
+  encounter:                        # how long to film each animal, and which ones were filmed (docs/SEARCH.md)
+    rule: mvt                       # mvt: leave when more footage is worth less than searching on | fixed: max_s only
+    tau_s: 30                       # footage of one animal is worth less and less: ~95% of its value after 3 x tau_s framed
+    min_s: 10                       # film at least this long (unless it flees)
+    max_s: 180                      # never longer than this (0 = no cap)
+    giveup_s: 30                    # no good shot by then: move on
+    novelty_bonus: 1.0              # an animal unlike those already filmed is worth up to 2x
     cooldown_s: 300                 # remember filmed animals this long (a recognised one is ignored)
     same_sim: 0.8                   # appearance similarity counted as "same animal"; calibrate with replay
     reid: true                      # recognise animals by appearance (needs an export with patch tokens)
+  search:                           # where to look (docs/SEARCH.md); needs nav input for depth and heading
+    strategy: adaptive              # adaptive | depth | legs | scan (the old turn-in-place)
+    min_depth_m: 20                 # the band the planner may use (the autopilot enforces its own hard limits)
+    max_depth_m: 200                # a lake shallower than this is fine: the profile stops at the bottom
+    min_altitude_m: 5               # with an altimeter: never ask to go closer to the bottom than this
+    diel_prior: true                # dusk/dawn: favour the 100-200 m migration corridor; night: shallow
+    sunrise_h: 6.5                  # sunrise and sunset at the dive site on the dive date, as times on
+    sunset_h: 18.5                  # the Pi's clock (set the clock before the dive: docs/SEARCH.md)
+    surge: 0.35                     # slow search speed
+    leg_s: 90                       # long relocation legs ...
+    giveup_s: 120                   # ... tight local search after each find, for this long
+  lights:                           # animals avoid light, red included; dim far-red disturbs least (docs/SEARCH.md)
+    search: 0.0                     # lamp level while searching when the camera can see by ambient light ...
+    search_dark: 0.3                # ... and when it cannot (frame brightness with the lamp off < dark_luma)
+    dark_luma: 0.08                 # check on the vehicle: telemetry lights.ambient in dark and lit water
+    check_s: 120                    # lamp on for darkness: switch it off this often to look for ambient light
+    track: 0.3                      # once an animal is close (apparent size >= near_size)
+    near_size: 0.08
+
+nav:                                # depth / heading / turn rate from the autopilot bridge (docs/PI5.md section 5)
+  kind: none                        # none | udp  (JSON datagrams: {"depth_m":..., "heading_deg":..., "yaw_rate_dps":...})
+  port: 14601
 
 backends:
   - {kind: jsonl, path: logs/guidance.jsonl}

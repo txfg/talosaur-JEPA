@@ -258,17 +258,28 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 3. The target becomes a bearing and elevation through a camera model: flat-port refraction, or an in-water calibration including lens distortion.
 4. A Kalman tracker with outlier gating smooths it.
 5. A state machine runs SEARCH → ACQUIRE → TRACK → FILM → LOST, plus RELEASE.
-6. **One animal at a time.** Each animal is filmed for a time budget (`encounter.max_s`, default 60 s). Then the sub stops recording, backs off, turns away and swims on (RELEASE), and looks for a *different* animal.
-   - Animals already filmed are recognised by appearance, not position: the model's patch features over the animal, compared with the ones it remembers.
-   - A recognised animal is ignored for a cooldown. An animal that only swam out of view resumes its remaining time.
-   - Every encounter is logged to `logs/encounters.jsonl` with its video files.
-7. A controller issues normalised yaw-rate / heave / surge requests, with a deadband, rate limits and a hard stand-off.
-8. **Recording** follows the state machine, with a pre-roll ring buffer so the approach is kept.
-9. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge. The autopilot choice is still open.
+6. **Search** ([`docs/SEARCH.md`](docs/SEARCH.md)). With depth and heading from the vehicle (`nav:` in the config):
+   - it profiles the depth range once, then works the depth bands where animals are detected most, with a time-of-day prior for the dusk and dawn migration;
+   - it swims long legs, switches to a tight local search after each find because animals come in patches, and steers away from water already covered.
 
-Two tools support it:
+   Without navigation input it scans and hops.
+7. **One animal at a time.** A foraging-theory rule, the marginal value theorem, decides how long each animal is worth filming. The sub leaves when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that flee, or never give a good shot, are left early; `encounter.max_s` (180 s) caps the rest. Then the sub backs off, turns away and swims on (RELEASE), and looks for a *different* animal.
+   - Animals already filmed are recognised by appearance, not position: the model's patch features over the animal, compared with the ones it remembers.
+   - A recognised animal is ignored for a cooldown. An animal that only swam out of view resumes where it left off. Animals unlike any filmed so far get more time.
+   - Every encounter is logged to `logs/encounters.jsonl`, with why it ended and where it is in the video.
+8. A controller issues normalised yaw-rate / heave / surge requests, heading and depth setpoints, and a lamp level. The lamp stays off while the camera can see by ambient light, goes dim when it cannot, and uses a tracking level once an animal is close. Commands have a deadband, rate limits and a hard stand-off.
+9. **Recording** runs continuously for the whole run, in 5-minute crash-safe segments. A low-disk guard only ever deletes segments without animals.
+10. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge; depth and heading come back over UDP. The autopilot choice is still open.
+
+Three tools support it:
 - **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.
 - **Replay** (`scripts/replay.py`): runs the identical pipeline on recorded video at the Pi's measured frame rate and writes an annotated video, telemetry and an encounter log. This is how guidance, including the "same animal" similarity threshold, is tuned without the vehicle.
+- **Simulator** (`python -m talosaur.sim.run`): runs the same guidance code in closed loop against a caricature of the twilight zone. The caricature has drifting patches of animals, vertical migration, and animals that avoid the vehicle and its lights. Use it to compare search and filming settings before a dive, not to predict what a dive will find ([`docs/SEARCH.md`](docs/SEARCH.md) §7):
+
+  ```bash
+  python -m talosaur.sim.run --hours 2 --start-hour 18.5 --seeds 0 1 2 \
+      --set guidance.lights.search=0.5 --out reports/sim/dusk_lights.json
+  ```
 
 Everything onboard is torch-free, and CI checks this on Python 3.13, the version Raspberry Pi OS Trixie ships. The picamera2 code is tested against a fake camera that follows the picamera2 0.3.37 API. **Nothing has run on a real Pi yet**: `docs/PI5.md` §14 lists what still needs hardware and §15 what to send back.
 
@@ -283,8 +294,9 @@ src/talosaur/
   monitor/   collapse metrics, in-training probes               [M2]
   eval/      probes, slices, robustness                         [M3]
   export/    ONNX, int8, ncnn                                   [M5]
-  guidance/  heatmap → bearing/size → track → commands (numpy)  [M6]
+  guidance/  heatmap → bearing/size → track → commands, search planner (numpy)  [M6]
   onboard/   Pi 5 runtime + benchmark (no torch)                [M6]
+  sim/       closed-loop simulator for search and filming settings (numpy)  [M6]
 configs/     Hydra configs (+ configs/onboard/pi5.yaml for the vehicle)
 scripts/     entry points (data/, train, eval, export, replay; pi/ setup + camera calibration)
 tests/       CPU-only tests on synthetic data (onboard/guidance tests also run without torch)

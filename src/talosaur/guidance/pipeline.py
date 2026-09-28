@@ -17,7 +17,10 @@ from talosaur.guidance.camera_model import CameraModel
 from talosaur.guidance.controller import Command, Controller, ControllerConfig
 from talosaur.guidance.encounters import EncounterConfig, EncounterManager
 from talosaur.guidance.heatmap import Target, find_blobs, order_blobs, sigmoid
+from talosaur.guidance.lights import LightPolicy, LightsConfig
+from talosaur.guidance.nav import NavState
 from talosaur.guidance.novelty import NoveltyDetector
+from talosaur.guidance.search import SearchConfig, SearchPlanner
 from talosaur.guidance.state_machine import ENGAGED, FSMConfig, GuidanceFSM, State
 from talosaur.guidance.tracker import TargetTracker, TrackerConfig
 
@@ -36,6 +39,8 @@ class GuidanceConfig:
     controller: ControllerConfig = field(default_factory=ControllerConfig)
     fsm: FSMConfig = field(default_factory=FSMConfig)
     encounter: EncounterConfig = field(default_factory=EncounterConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
+    lights: LightsConfig = field(default_factory=LightsConfig)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> GuidanceConfig:
@@ -46,6 +51,8 @@ class GuidanceConfig:
             "controller": ControllerConfig,
             "fsm": FSMConfig,
             "encounter": EncounterConfig,
+            "search": SearchConfig,
+            "lights": LightsConfig,
         }
         kw: dict[str, Any] = {}
         for k, v in d.items():
@@ -73,13 +80,28 @@ class Guidance:
         self.last_xy: tuple[float, float] | None = None
         self.last_yaw = 0.0
         self.release_away = 1.0
+        self.release_heading: float | None = None
+        self.nav: NavState | None = None
+        self.search = SearchPlanner(self.cfg.search)
+        self.lights = LightPolicy(self.cfg.lights)
 
     def step(
-        self, t: float, frame_logit, heatmap_logit, embedding=None, tokens=None
+        self,
+        t: float,
+        frame_logit,
+        heatmap_logit,
+        embedding=None,
+        tokens=None,
+        nav: NavState | None = None,
+        luma: float | None = None,
     ) -> tuple[Command, dict[str, Any], list[str]]:
-        """One frame. ``tokens``: the model's patch tokens (h, w, D) if the export has them."""
+        """One frame. ``tokens``: the model's patch tokens (h, w, D) if the export has them;
+        ``nav``: depth / heading / turn rate if the vehicle provides them (search planning);
+        ``luma``: the frame's mean brightness, 0-1 (lamp control: lights.py)."""
+        self.nav = nav if nav is not None and nav.fresh(t) else None
         c = self.cfg
         enc = self.encounters
+        enc.tick(t)
         frame_prob = float(sigmoid(np.asarray(frame_logit).reshape(-1)[c.frame_index]))
         prob = sigmoid(np.asarray(heatmap_logit, dtype=np.float32))
         tok = None if tokens is None else np.asarray(tokens)
@@ -108,7 +130,10 @@ class Guidance:
         track = self.tracker.step(t, meas)
         if not track.active:
             self.last_xy = None
-        release = enc.active and enc.exhausted(t)
+        heading = None if self.nav is None else self.nav.heading(t)
+        detected = target.found and (frame_prob >= c.fsm.frame_on or target.peak >= c.fsm.heat_on)
+        self.search.observe(t, self.nav, detected, self.controller.last.surge, heading, searching=choosing)
+        release = enc.leave_reason(t) if self.fsm.state in ENGAGED else None
         events = self.fsm.update(t, frame_prob, target, track, release=release)
 
         summary = None
@@ -117,16 +142,22 @@ class Guidance:
                 enc.start(t, desc)
             elif ev == "encounter_end":
                 summary = enc.end(t, self.fsm.end_reason or "lost")
+                self.search.on_find(t)  # animals come in patches: search around here next
         st = self.fsm.state
         if st == State.RELEASE and st0 != State.RELEASE:
             self.release_away = -1.0 if self.last_yaw > 0 else 1.0  # turn away from the animal's side
+            self.release_heading = (
+                None
+                if heading is None
+                else (heading + self.release_away * c.controller.release_turn_deg) % 360.0
+            )
             self.tracker.reset()
             self.last_xy = None
         if st in ENGAGED:
-            enc.observe(t, st.value, target, frame_prob, desc)
+            enc.observe(t, st.value, target, frame_prob, desc, track, own_surge=self.controller.last.surge)
 
         if st == State.SEARCH:
-            cmd = self.controller.search(t)
+            cmd = self.controller.shape(self.search.command(t, self.nav), t)
         elif st == State.ACQUIRE:
             cmd = self.controller.hold(t)
         elif st == State.TRACK:
@@ -136,7 +167,11 @@ class Guidance:
         elif st == State.LOST:
             cmd = self.controller.lost(self.last_yaw, t)
         else:  # RELEASE
-            cmd = self.controller.release(t, t - self.fsm.since, self.release_away)
+            cmd = self.controller.release(
+                t, t - self.fsm.since, self.release_away, heading, self.release_heading
+            )
+        close = st in ENGAGED and track.active and track.size >= c.lights.near_size
+        cmd.light = self.lights.update(t, luma, close)
         if track.active:
             self.last_yaw = track.yaw
         nov = None
@@ -159,8 +194,14 @@ class Guidance:
                 "id": cur.id,
                 "engaged_s": round(cur.engaged_s(t), 2),
                 "remaining_s": _num(enc.remaining_s(t), 2),
+                "good_s": round(cur.good_s, 2),
+                "marginal_rate": _num(enc.marginal_rate(), 5),
+                "long_run_rate": _num(enc.long_run_rate(t), 5),
             },
             "reid": {"sim": _num(sim), "skipped": skipped, "remembered": len(enc.memory)},
+            "nav": None if self.nav is None else self.nav.as_dict(),
+            "lights": self.lights.status(),
+            "search": self.search.status() if st == State.SEARCH else None,
         }
         if summary:
             tele["encounter_summary"] = summary

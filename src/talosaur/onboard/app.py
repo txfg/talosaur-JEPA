@@ -29,6 +29,7 @@ from talosaur.guidance.novelty import NoveltyDetector
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
 from talosaur.onboard import sysinfo
 from talosaur.onboard.camera import Picamera2Source, SyntheticSource, VideoFileSource
+from talosaur.onboard.nav_input import make_nav
 from talosaur.onboard.recorder import ContinuousRecorder, NullRecorder, Picamera2Recorder
 from talosaur.onboard.runtime import load_runner, preprocess
 from talosaur.utils.io import load_yaml
@@ -95,6 +96,7 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
             raise
     guidance = Guidance(GuidanceConfig.from_dict(cfg.get("guidance")))  # novelty sized on the first frame
     backend = make_backend(cfg.get("backends", [{"kind": "jsonl", "path": "logs/guidance.jsonl"}]))
+    guidance.nav_source = make_nav(cfg.get("nav"))  # depth / heading from the autopilot bridge, if any
     return runner, source, recorder, guidance, backend
 
 
@@ -141,7 +143,7 @@ def run(
                 f.write(json.dumps(rec) + "\n")
         log.info(
             f"encounter {rec['id']} ended ({rec['reason']}): {rec['engaged_s']} s on this animal, "
-            f"{rec['film_s']} s well framed, files {rec['recordings']}"
+            f"{rec['good_s']} s well framed, files {rec['recordings']}"
         )
 
     t_last = 0.0
@@ -157,7 +159,11 @@ def run(
             t_inf = time.perf_counter() - t0
             if guidance.novelty is None and guidance.cfg.novelty:
                 guidance.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
-            cmd, tele, events = guidance.step(fr.t, out.frame, out.heat, out.emb, out.tokens)
+            nav = guidance.nav_source.poll(fr.t)
+            luma = float(fr.rgb.mean()) / 255.0  # scene brightness: lamp control (guidance/lights.py)
+            cmd, tele, events = guidance.step(
+                fr.t, out.frame, out.heat, out.emb, out.tokens, nav=nav, luma=luma
+            )
             for ev in events:
                 if ev == "encounter_start":
                     recorder.protect_since = fr.t
@@ -200,6 +206,7 @@ def run(
         recorder.close(t_last)
         source.close()
         backend.close()
+        guidance.nav_source.close()
         for s, hnd in old_handlers.items():
             signal.signal(s, hnd)
     summary = {

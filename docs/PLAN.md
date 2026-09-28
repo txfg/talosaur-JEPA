@@ -13,7 +13,10 @@ This repo will hold one config-driven pipeline:
 2. **I-JEPA pretraining of ViT-Tiny/16**, with ViT-Small/16 for comparison, on the 2080s. An optional underwater-degradation module can be switched on per run for ablations. Optional stages: V-JEPA video pretraining, and distillation from DINOv2 or a V-JEPA 2.1 ViT-B teacher.
 3. **Frozen-feature evaluation.** A frame-level "animal present" probe and a per-patch heatmap probe, reported separately on **dark / murky / clear** subsets. Baselines: DINOv2 ViT-S/14, ImageNet ViT-Tiny, and MobileNetV3.
 4. **Deployment.** Encoder and both heads are exported as one ONNX graph, int8 static-quantized with an underwater calibration set, and benchmarked on the Pi 5 with ONNX Runtime and ncnn. The Pi 5 runtime uses no PyTorch.
-5. **Guidance and recording (expansion).** Heatmap → target bearing, elevation, and apparent size → filtered track → yaw/heave/surge commands. A SEARCH → ACQUIRE → TRACK → FILM → LOST state machine decides when to record, so CPU goes to video encoding only when there is something to film.
+5. **Guidance and recording (expansion).** Heatmap → target bearing, elevation, and apparent size → filtered track → yaw/heave/surge commands. A SEARCH → ACQUIRE → TRACK → FILM → LOST → RELEASE state machine decides what the vehicle does:
+   - a search planner chooses depth bands and headings from detections, time of day and the water already covered;
+   - a foraging-theory rule decides how long each animal is worth filming before moving on;
+   - video is recorded continuously, with every animal indexed into it ([`docs/SEARCH.md`](SEARCH.md)).
 
 ```mermaid
 flowchart LR
@@ -35,7 +38,7 @@ flowchart LR
   end
   subgraph M56["M5–M6 · Raspberry Pi 5"]
     PR --> EXP["ONNX encoder+heads → int8 / ncnn"]
-    EXP --> RT["camera lores → heatmap → track<br/>yaw/heave/surge · state machine → record"]
+    EXP --> RT["camera lores → heatmap → track<br/>yaw/heave/surge · state machine · search planner<br/>continuous recording"]
   end
 ```
 
@@ -320,13 +323,18 @@ With 112 cores, JPEG decoding keeps up (needs ~400–2,000 img/s). `scripts/benc
    - rate limits and a hard minimum stand-off.
 6. State machine: **SEARCH → ACQUIRE** (N of M frames above threshold) **→ TRACK → FILM → LOST** (hold/turn toward last bearing for T s) **→ SEARCH**. Vehicle-level safety stays with the autopilot.
 7. **One animal at a time** (added after M6 review).
-   - Each animal gets a time budget. Then **RELEASE**: stop recording, back off, turn away, swim on, and search for a different animal.
-   - Animals already filmed are recognised by **appearance, not position**: the model's patch tokens pooled over the animal's blob, centred on the background, compared by cosine similarity.
-   - A recognised animal is ignored for a cooldown. One that was only lost resumes its remaining budget.
+   - How long to film each animal follows the **marginal value theorem**: leave when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that flee, or never give a good shot, are left early; a hard cap bounds the rest. Then **RELEASE**: back off, turn away, swim on, and search for a different animal.
+   - Animals already filmed are recognised by **appearance, not position**: the model's patch tokens pooled over the animal's blob, centred on the background, compared by cosine similarity. Animals unlike those already filmed are valued more.
+   - A recognised animal is ignored for a cooldown. One that was only lost resumes where it left off.
    - Every encounter is logged with its video files (`docs/PI5.md` §12).
-8. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11).
+8. **Search** (added after M6 review; [`docs/SEARCH.md`](SEARCH.md)). Built from depth, heading and time only, because horizontal position drifts without a DVL:
+   - an initial depth profile, then depth bands chosen by Thompson sampling of their detection rates, with a time-of-day prior for vertical migration;
+   - long relocation legs, switching to a tight local search after each find (animals come in patches), steering away from water already covered;
+   - the lamp off while the camera can see by ambient light, dim when it cannot, a tracking level once an animal is close;
+   - a closed-loop simulator (`talosaur.sim`) to compare strategies before dives.
+9. Backends: JSONL log (default), JSON over UDP, and MAVLink (ArduSub-compatible) if that is your stack (§11). Navigation input (depth, heading) comes back from the autopilot bridge over UDP.
 
-**Recording.** The state machine decides when the main stream is saved: from entering TRACK until a post-roll after returning to SEARCH. A pre-roll ring buffer keeps the approach, but it means the software encoder runs all the time. `preroll_s: 0` encodes only while recording, trading the approach footage for CPU (`docs/PI5.md` §6). The low-res stream always feeds the model. The benchmark measures model fps *while recording*, which tells us the real sustainable rate.
+**Recording.** The main stream is recorded continuously for the whole run, in crash-safe MPEG-TS segments, and the encounter log indexes each animal into them (`docs/PI5.md` §6). A low-disk guard deletes only segments without animals. An events-only mode (from entering TRACK until a post-roll, with a pre-roll buffer) remains for when storage or CPU is short. The low-res stream always feeds the model. The benchmark measures model fps *while recording*, which tells us the real sustainable rate.
 
 **Replay tool.** `scripts/replay.py video.mp4` runs the full onboard loop on recorded footage on your desktop or on the Pi. It writes an annotated video (heatmap, centroid, track, state, commands) plus a command log. This is how guidance gets tuned without the vehicle.
 
@@ -435,6 +443,8 @@ Each milestone ends with green CI, a README section, and a short "run this, send
 
 \* optional. M3 and M4 can overlap with M2 training runs.
 
+Added after the M6 review: one animal at a time with appearance memory, continuous recording, the search planner, the leave rule, navigation input, and the simulator. They are tested on CPU and in simulation only; your first dives calibrate them (`docs/SEARCH.md` §7).
+
 ---
 
 ## 10. Uncertainties
@@ -465,6 +475,12 @@ Each milestone ends with green CI, a README section, and a short "run this, send
 19. **Flat vs dome port** changes the bearing calibration.
 20. **Camera behaviour in the dark.** Exposure/gain limits and autofocus hunting in turbid water need in-water tests. The onboard config exposes AE/AF limits.
 
+**Search and filming behaviour**
+21. **The simulator is a caricature.** Animal densities, patchiness, detection ranges and reactions to the vehicle are assumptions. It ranks strategies under those assumptions only; dive logs replace them.
+22. **Lights off while searching** relies on the camera detecting animals by ambient light or bioluminescence. At 100–200 m at night there is very little. If it detects nothing, searching needs some light, which some animals avoid.
+23. **Dead reckoning without a DVL.** The "water already searched" map uses heading and commanded speed; it is only as good as the speed calibration and the compass.
+24. **Leave-rule values.** `tau_s` (how fast one animal's footage loses value) is a judgement about what the footage is for; `same_sim` depends on the trained model.
+
 ---
 
 ## 11. Decisions needed from you (defaults in bold)
@@ -472,8 +488,9 @@ Each milestone ends with green CI, a README section, and a short "run this, send
 1. **GPUs.** How many, and which variant? A 2080 or 2080 Super has 8 GB; a 2080 Ti has 11 GB. How many CPU cores, how much RAM, and how much free SSD on that box? *Default: **1× 8 GB, ≥ 8 cores, ≥ 32 GB RAM, ≥ 500 GB**; the code scales to N GPUs with DDP.*
 2. **License posture.** Research / non-commercial now, or must the model stay commercially usable? *Default: **research use allowed; every image is license-tracked so a commercial-clean model can be rebuilt**; never copy CC BY-NC code.*
 3. **Autopilot interface.** ArduSub/MAVLink, a custom MCU over UART, or undecided? *Default: **abstract interface + JSONL/UDP backends**; MAVLink backend if you say so.*
-4. **Lights.** White LEDs, red, or none yet? *Default: **augmentation covers both**.*
-5. **Recording.** Pi camera recording (costs Pi CPU), or a separate action cam? *Default: **Pi records 720p only in TRACK/FILM with pre-roll**; the benchmark decides.*
+4. **Lights.** White LEDs, red, or none yet? *Default: **augmentation covers both**; guidance keeps them off while the camera can see by ambient light, dim when it cannot, and far-red disturbs animals least (`docs/SEARCH.md` §4).*
+5. **Recording.** Pi camera recording (costs Pi CPU), or a separate action cam? *Default: **Pi records 720p continuously, in segments**; the benchmark decides whether the CPU allows it.*
 6. **Housing port.** Flat or dome? *Default: **flat-port model + in-water calibration**.*
 7. **Existing footage.** Do you have any pool/lake video yet? It becomes the murky-freshwater test set.
 8. **Approval scope.** *Default: **build M0–M6, then check in before the optional M7–M8**.*
+9. **Navigation sensors.** Which of depth sensor, compass/IMU, DVL and altimeter will the vehicle have? *Default: **depth and heading from the autopilot over UDP**; the search degrades to scan-and-hop without them.*

@@ -11,9 +11,10 @@
 * FILM: target centred and at a good size for ``film_hold_s`` -> hold framing (no approach).
 * LOST: tracker lost the target -> turn toward the last bearing for ``lost_timeout_s``; re-acquire
   -> TRACK (same encounter), else SEARCH (encounter ends, reason "lost").
-* RELEASE: the encounter's time budget is used up (``release=True`` from the caller) -> back off,
-  turn away and swim on for ``release_s`` while ignoring detections, then SEARCH for another
-  animal (encounter ends, reason "budget").
+* RELEASE: the caller decided to leave the animal (``release=<reason>``: enough footage, it fled,
+  no good shot, or the time budget - see encounters.py) -> back off, turn away and swim on for
+  ``release_s`` while ignoring detections, then SEARCH for another animal (the encounter ends with
+  that reason).
 
 Recording stops ``postroll_s`` after leaving TRACK/FILM/LOST, so RELEASE also ends the recording.
 Events: ``encounter_start`` / ``encounter_end`` (see ``end_reason``), ``start_recording`` /
@@ -74,9 +75,15 @@ class GuidanceFSM:
         self.state, self.since = s, t
 
     def update(
-        self, t: float, frame_prob: float, target: Target, track: TrackState, release: bool = False
+        self,
+        t: float,
+        frame_prob: float,
+        target: Target,
+        track: TrackState,
+        release: str | bool | None = None,
     ) -> list[str]:
-        """Advance one frame. ``release``: the current animal's time budget is used up."""
+        """Advance one frame. ``release``: leave the current animal now - a reason such as
+        ``"enough"``, ``"fled"``, ``"no_shot"`` or ``"budget"`` (``True`` means ``"budget"``)."""
         c = self.cfg
         events: list[str] = []
         prev = self.state
@@ -84,7 +91,7 @@ class GuidanceFSM:
         self.recent.append(detected)
         if self.state in ENGAGED and release:
             self._go(State.RELEASE, t)
-            self.end_reason = "budget"
+            self.end_reason = release if isinstance(release, str) else "budget"
             self.film_ok_since = None
             events.append("encounter_end")
         elif self.state == State.SEARCH:

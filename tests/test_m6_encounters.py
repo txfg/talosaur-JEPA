@@ -181,10 +181,108 @@ def test_without_patch_tokens_it_still_moves_on_but_cannot_recognise():
 
 
 def test_zero_budget_follows_indefinitely():
-    g = Guidance(_cfg(max_s=0.0))
+    g = Guidance(_cfg(max_s=0.0, rule="fixed"))
     teles = _run(g, [[(FISH_A, 3, 6)]] * 300)
     assert not any(t["state"] == "RELEASE" for t in teles)
     assert teles[-1]["encounter"]["remaining_s"] is None and teles[-1]["encounter"]["engaged_s"] > 29
+
+
+# ----------------------------------------------------------------------------- when to leave (MVT)
+
+
+def _film_until_leave(
+    mgr: EncounterManager,
+    t0: float,
+    dt: float = 0.2,
+    framed: bool = True,
+    size_rate: float = 0.0,
+    own_surge: float = 0.0,
+):
+    """Film one animal (well framed or not) until the manager says leave; returns (reason, t)."""
+    tgt = Target(True, 0.5 if framed else 0.95, 0.5, 0.15, 2.0, 0.95)
+    trk = TrackState(active=True, confirmed=True, size=0.15, size_rate=size_rate, hits=10)
+    mgr.start(t0, None)
+    t = t0
+    while t < t0 + 1000:
+        t += dt
+        mgr.observe(t, "FILM", tgt, 0.95, None, trk, own_surge=own_surge)
+        reason = mgr.leave_reason(t)
+        if reason:
+            return reason, t
+    return None, t
+
+
+def test_mvt_films_longer_when_animals_are_rare():
+    import math
+
+    cfg = EncounterConfig(max_s=0.0, tau_s=30.0, prior_s=1.0, min_s=5.0)
+    times = {}
+    for name, rate in (("plentiful", 1 / 60), ("rare", 1 / 1200)):
+        m = EncounterManager(cfg)
+        m.tick(0.0)
+        m.value_done = rate * 3600.0  # an hour of history at that rate
+        reason, t = _film_until_leave(m, 3600.0)
+        assert reason == "enough"
+        times[name] = t - 3600.0
+        # analytic optimum for continuous framing: g* = tau * ln(w / (tau * R)), w = 1 (no appearance)
+        assert times[name] == pytest.approx(30.0 * math.log(1.0 / (30.0 * rate)), abs=1.5)
+    assert times["plentiful"] < 25 < 80 < times["rare"]
+
+
+def test_mvt_lets_a_fleeing_animal_go_and_gives_up_without_a_good_shot():
+    import math
+
+    reason, t = _film_until_leave(EncounterManager(EncounterConfig()), 0.0, size_rate=-0.3)
+    assert reason == "fled" and t == pytest.approx(2.0, abs=0.3)
+    # shrinking because the vehicle is backing off (stand-off) is not fleeing
+    m = EncounterManager(EncounterConfig(max_s=15.0))
+    assert _film_until_leave(m, 0.0, size_rate=-0.3, own_surge=-0.2)[0] == "budget"
+    # never well framed: its expected value decays with the framed fraction (10 s memory) until it
+    # drops below the long-run rate - at 10 * ln(1 / (tau * R)) = 23 s with the default prior
+    reason, t = _film_until_leave(EncounterManager(EncounterConfig()), 0.0, framed=False)
+    assert reason == "no_shot" and t == pytest.approx(10 * math.log(1 / (30 / 300)), abs=0.3)
+    # where animals are rare the rule would wait longer, so the give-up time ends it
+    rare = EncounterManager(EncounterConfig(prior_rate=1 / 3000))
+    assert _film_until_leave(rare, 0.0, framed=False) == ("no_shot", pytest.approx(30.0, abs=0.3))
+    m = EncounterManager(EncounterConfig(rule="fixed", max_s=20.0))
+    assert _film_until_leave(m, 0.0, size_rate=-0.3) == ("budget", pytest.approx(20.0, abs=0.3))
+
+
+def test_novel_looking_animals_are_worth_more():
+    m = EncounterManager(EncounterConfig())
+    a = np.eye(4)[0]
+    first = m.start(0.0, a)
+    m.end(10.0, "enough")
+    lookalike = m.start(20.0, _unit_like(a, 0.95))
+    m.end(30.0, "enough")
+    novel = m.start(40.0, np.eye(4)[2])
+    assert first.weight == pytest.approx(2.0)  # nothing filmed yet: fully novel
+    assert lookalike.weight < 1.2 < novel.weight == pytest.approx(2.0)
+    m.end(50.0, "enough")
+    again = m.start(3650.0, _unit_like(a, 0.9))  # an hour later
+    assert m.memory == []  # the cooldown memory has forgotten them ...
+    assert again.weight < 1.2  # ... but novelty still knows the look
+
+
+def _unit_like(v, cos):
+    w = np.zeros_like(v)
+    w[1] = 1.0
+    out = cos * v + np.sqrt(1 - cos**2) * w
+    return out / np.linalg.norm(out)
+
+
+def test_pipeline_leaves_a_well_filmed_animal_when_enough():
+    g = Guidance(
+        GuidanceConfig(
+            fsm=FSMConfig(release_s=2.0),
+            encounter=EncounterConfig(max_s=0.0, tau_s=10.0, min_s=5.0, prior_rate=1 / 60, prior_s=600.0),
+        )
+    )
+    teles = _run(g, [[(FISH_A, 3, 6)]] * 400)  # a centred fish, for 40 s
+    s = next(t["encounter_summary"] for t in teles if "encounter_summary" in t)
+    assert s["reason"] == "enough" and 10 < s["good_s"] < 30 and 0 < s["value"] <= s["novelty_weight"]
+    live = [t["encounter"] for t in teles if t["encounter"]]
+    assert live[0]["marginal_rate"] > live[0]["long_run_rate"] > live[-1]["marginal_rate"]
 
 
 def test_close_reports_an_open_encounter():

@@ -196,7 +196,7 @@ def test_app_runs_the_full_loop_on_synthetic_frames(toy_export, tmp_path):
     # the synthetic fish swims left -> right: the yaw command follows it
     assert tracking[0]["cmd"]["yaw_rate"] < 0 < tracking[25]["cmd"]["yaw_rate"]
     for r in guid:
-        assert all(abs(v) <= 1.0 for v in r["cmd"].values())
+        assert all(abs(r["cmd"][k]) <= 1.0 for k in ("yaw_rate", "heave", "surge"))
     assert any("start_recording" in r["events"] for r in guid)
     # the run ends mid-encounter: it is still logged, as "shutdown"
     (enc,) = [json.loads(line) for line in (tmp_path / "encounters.jsonl").read_text().splitlines()]
