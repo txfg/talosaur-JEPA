@@ -49,6 +49,7 @@ Everything below runs on the training machine; this repo never stores images. Th
 ```
 data/raw/<source>/          downloads (safe to delete after ingest)
 data/images/<source>/       resized JPEGs (short side 288 px for video frames, 384 px for labelled stills)
+data/h5/<source>/           the same JPEGs (and masks) packed into HDF5 parts, once step 1b has run
 data/interim/<source>/      records.parquet + manifest.json (license, attribution, options)
 data/index/<name>.parquet   the curated index used by training and evaluation
 ```
@@ -76,9 +77,25 @@ python scripts/data/fetch.py noaa_oer --root data --accept-license noaa-public-d
 python scripts/data/fetch.py deepfish --root data --accept-license CC-BY-4.0            # 7.1 GB tar, SHA-256 checked
 python scripts/data/fetch.py kakadu   --root data --accept-license CC-BY-4.0            # via the Zenodo API
 python scripts/data/fetch.py brackish --root data --accept-license CC-BY-SA-4.0 --from-dir ~/Downloads/brackish   # from Kaggle
+# River Herring: download and unzip mit_river_herring.zip (41.5 GB) from the LILA page. Its JSON has boxes
+# only, so first mark the unboxed frames of fully reviewed clips as empty (docs/DATASETS.md §5):
+python scripts/data/prep_river_herring.py --zip mit_river_herring.zip --out river_herring_cct.json
 python scripts/data/fetch.py river_herring --root data --accept-license CDLA-Permissive-1.0 \
-    --metadata <COCO-camera-traps JSON from the LILA page> --images-dir <downloaded images> --max-empty 20000
+    --metadata river_herring_cct.json --images-dir <unzipped>/mit_river_herring --max-empty 20000
+# NOAA Puget Sound Nearshore Fish: unzip noaa_estuary_fish-images.zip (7.7 GB) and the annotations zip from LILA.
+python scripts/data/fetch.py puget_sound --root data --accept-license CDLA-Permissive-1.0 \
+    --metadata <annotations>.json --images-dir <unzipped images> --max-empty 20000
 python scripts/data/fetch.py own      --root data --accept-license own --from-dir ~/talosaur_dives   # your footage
+```
+
+**1b. Pack into HDF5 (optional).** Moves each source's JPEGs and masks into `data/h5/<source>/part-NNN.h5`,
+byte for byte. That's hundreds of thousands fewer files; the size barely changes, because JPEGs don't compress
+further. Records keep their paths and every reader falls back to the pack, so the steps below work unchanged.
+Re-run it after fetching more: only new files go into a new part.
+
+```bash
+python scripts/data/pack_h5.py --root data --delete      # every source; loose files go only after a CRC check
+python scripts/data/pack_h5.py --root data --verify      # re-check every part
 ```
 
 **2. Curate and report.**
@@ -196,8 +213,8 @@ python scripts/eval.py --config configs/eval/default.yaml --only jepa_tiny_ctx_t
 
 **Patch probe** (heatmap): logistic regression on patch tokens.
 - Positives are patches with at least 30% box/mask coverage.
-- Negatives are used only where they are trustworthy: masks, exhaustive boxes, and empty frames.
-- Metrics: patch AUROC/AP and best IoU, plus the steering metrics:
+- Negatives are the empty patches of images with masks, exhaustive boxes, or no animal, plus patches at least one cell from every box in the other boxed images (FathomNet, Kakadu). Without those, all background comes from other datasets and the probe can score well by telling datasets apart: on a FathomNet-pretrained encoder it did, ranking FathomNet background above the animals.
+- Metrics: patch AUROC/AP, **within-image AUROC** (animal patches vs their own image's background, which dataset differences can't inflate) and best IoU, plus the steering metrics:
   - **centroid error in degrees** (as seen by the Camera Module 3 Wide, 102°×67°);
   - apparent-size error;
   - peak hit rate;
@@ -276,7 +293,7 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 
 Before every dive, work through [`docs/PREDIVE.md`](docs/PREDIVE.md): leak test, trim for fresh or salt water, clock, storage, lamp, sensors, arm switch. [`docs/SENSORS.md`](docs/SENSORS.md) is the plan for the depth sensor, compass and IMU, and the echosounder still to add.
 
-[`docs/DIGITAL_TWIN.md`](docs/DIGITAL_TWIN.md) is the plan for a digital twin of the vehicle, with the unchanged onboard software in the loop, and for the pool session that calibrates the twin to the real vehicle. It compares the candidate simulators and their licences.
+[`docs/DIGITAL_TWIN.md`](docs/DIGITAL_TWIN.md) is the plan for a digital twin of the vehicle, with the unchanged onboard software in the loop, and for the pool session that calibrates the twin to the real vehicle. It compares the candidate simulators and their licences. A first version runs on the training box: `python -m talosaur.sim.twin` drives the guidance code and the exported network with a physics vehicle and a rendered camera (§1b).
 
 Four tools support it:
 - **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.

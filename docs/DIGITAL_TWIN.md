@@ -43,6 +43,41 @@ flowchart LR
     messages and supply camera frames.
   - The app itself does not change.
 
+## 1b. The twin on the training box (built)
+
+T1 and the images-mode half of T2 now run in one process on the training machine, with no Pi,
+autopilot or GPU needed (the model runs on the CPU, as on the Pi):
+
+```bash
+python -m talosaur.sim.twin --encoder runs/<run>/encoder_target.pt \
+    --heads reports/eval/<name>/heads_<backbone>_112x208.pt \
+    --minutes 20 --start-hour 18.9 --lamp red --video runs/twin/dusk.mp4 --out runs/twin/dusk.json
+python -m talosaur.sim.twin --camera truth --minutes 20 --out runs/twin/truth.json   # perfect detector
+```
+
+- **Vehicle** (`talosaur.sim.dynamics`, T1): the one-axis-per-DOF model of §6 (mass + added mass,
+  linear and quadratic drag, thrust limits, thruster lag, net buoyancy) from
+  `configs/vehicle/talosaur_v0.yaml`, with an autopilot for the heading, depth and rate commands
+  and noisy depth, compass and gyro. The numbers are BlueROV2-like estimates [E] until the pool fit.
+- **Camera** (`talosaur.sim.render`): ambient light falling with depth and time of day, the lamp's
+  beam (red or white) with inverse-square falloff, attenuation and a backscatter veil, marine snow,
+  bioluminescent flashes, auto-exposure with a gain limit, and noise. The animals are real animals
+  cut out of held-out FathomNet test and validation images (never the training split), one
+  taxonomic group per simulated species, placed by the guidance camera model.
+- **Model**: the network the ONNX export wraps (`build_net`), on the downsampled 208 x 112 frame.
+  `--camera truth` swaps in ground-truth heatmaps: the difference between the two runs is the
+  model's share of any failure.
+- **Loop**: `Guidance.step` gets the frame's brightness and glow grid, as on the Pi; the world's
+  animals migrate, drift in patches, and avoid the vehicle and its lamp (`talosaur.sim.world`).
+- **Scores**: footage `value` and `animals` as in `sim.run`, plus `peak_hit` (heatmap peak on a
+  visible animal), `engaged_empty_s` (engaged with nothing in view) and `target_err_deg`.
+
+**Limits.** The renderer is an approximation for control and model checks, not a substitute for
+real footage (§8.3); its optical constants are estimates [E]. It runs in the water's frame (no
+current), with no cross-coupling between axes, and it does not yet go through the app's UDP
+messages (the out-of-process half of T2). Frames and videos contain FathomNet-derived animals:
+keep them local.
+
 ## 2. Choosing the simulator
 
 | simulator | what it gives | cost | licence | role |
@@ -199,8 +234,8 @@ Each milestone is small and testable, in the project's usual way.
 
 | | milestone | test |
 |---|---|---|
-| T1 | vehicle description file + Python dynamics twin (surge, sway, heave, yaw; roll and pitch self-righting) with sensor models | step responses match the analytic one-axis solutions; buoyancy offset matches trim |
-| T2 | twin ⇄ app over UDP, plus `source.kind: sim` with the mask mode | the toy model or ground-truth masks close the loop: search, approach, RELEASE, all in CI |
+| T1 | vehicle description file + Python dynamics twin (surge, sway, heave, yaw; roll and pitch self-righting) with sensor models | step responses match the analytic one-axis solutions; buoyancy offset matches trim. **Built** (§1b; roll and pitch not modelled yet) |
+| T2 | twin ⇄ app over UDP, plus `source.kind: sim` with the mask mode | the toy model or ground-truth masks close the loop: search, approach, RELEASE, all in CI. **In-process version built** (§1b: truth and rendered-image modes); the UDP link to the app is still to do |
 | T3 | scripted calibration mission (runs only when armed) + `calib.fit` + comparison report | parameters are recovered from twin-generated logs with known values and noise |
 | T4 | ArduSub SITL through the JSON interface (when ArduSub is chosen) | arm, hold depth and heading, failsafe on lost commands |
 | T5 | Stonefish scene: dark water column, red lamp, marine snow, animated animals, segmentation ground truth → app | exposure and lamp logic; guidance against rendered scenes |

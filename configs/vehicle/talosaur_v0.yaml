@@ -1,0 +1,53 @@
+# Vehicle description for the digital twin (docs/DIGITAL_TWIN.md §3): one file for the twin now and
+# for the pool fit later (python -m talosaur.calib.fit, to build). Every number is a first estimate
+# [E] until the pool session replaces it.
+#
+# Hydrodynamics: BlueROV2 values as quoted from Wu 2018 (Flinders thesis) in the von Benzon et al.
+# 2022 benchmark simulator [L, from memory: check before relying on them]. Thrust limits are set so
+# the steady speeds match what the guidance assumes (search.speed_mps_per_unit = 0.6 m/s at full
+# surge; the autopilot's 40 deg/s and 0.3 m/s limits).
+name: talosaur_v0
+
+mass_kg: 11.0
+yaw_inertia_kgm2: 0.26
+net_buoyancy_n: 2.0          # + floats up; the depth hold has to carry it (trim test: docs/PREDIVE.md)
+
+added_mass:                  # kg (surge, sway, heave) and kg m^2 (yaw)
+  surge: 5.5
+  sway: 12.7
+  heave: 14.57
+  yaw: 0.12
+linear_damping:              # N per m/s, N m per rad/s
+  surge: 4.03
+  sway: 6.22
+  heave: 5.18
+  yaw: 0.07
+quadratic_damping:           # N per (m/s)^2, N m per (rad/s)^2
+  surge: 18.18
+  sway: 21.66
+  heave: 36.99
+  yaw: 1.55
+
+thrust:                      # largest force / torque the thrusters give on each axis
+  surge_n: 9.0               # ~0.6 m/s steady at full surge
+  reverse_n: 5.0
+  heave_n: 8.0               # carries the buoyancy and still reaches the 0.3 m/s limit
+  yaw_nm: 1.2                # ~40 deg/s steady
+  response_s: 0.15           # thruster spin-up time constant
+
+autopilot:                   # the bridge / ArduSub-style holds the twin stands in for
+  max_yaw_dps: 40.0
+  max_vspeed_mps: 0.3
+  heading_kp: 2.0            # deg/s of turn rate per deg of heading error
+  yaw_rate_kp: 3.0           # N m per rad/s of turn-rate error (plus a drag feed-forward)
+  depth_kp: 0.5              # m/s per m of depth error
+  vspeed_kp: 40.0            # N per m/s of vertical-speed error
+  vspeed_ki: 20.0            # N per m of integrated vertical-speed error (learns the buoyancy)
+  min_depth_m: 5.0
+  max_depth_m: 250.0
+
+sensors:
+  heading_noise_deg: 1.0     # compass
+  heading_bias_deg: 0.0
+  gyro_noise_dps: 0.5
+  depth_noise_m: 0.05
