@@ -44,8 +44,9 @@ plug in (§6).
 - In the Gulf over deep water the bottom is far out of range. The sounder then only matters near
   the shelf edge or over banks.
 
-MeCO (University of Minnesota) carries a downward echosounder for this reason [V: MeCO's public
-documentation, read for the comparison in this project].
+MeCO (University of Minnesota) carries an echosounder, which its documentation says "detects
+obstacles and maps the seafloor" [V: MeCO's public documentation, read for the comparison in this
+project].
 
 **What it must do** [E]:
 - **Depth rating** at least 1.5× the working depth: 300 m for 200 m work (docs/TWILIGHT_ZONE.md §7.8).
@@ -130,7 +131,7 @@ The turn rate from the gyro helps hold a heading.
 
 **What to use.**
 - A tilt-compensated heading (accelerometer plus magnetometer), fused with the gyro, i.e. an
-  AHRS. MeCO uses a factory-calibrated AHRS, the MicroStrain 3DM-CV7 [V: MeCO documentation].
+  AHRS. MeCO uses one, the MicroStrain 3DM-CV7 [V: MeCO documentation].
 - A separate IMU and magnetometer work too, if calibrated well.
 
 **Mount and calibrate.**
