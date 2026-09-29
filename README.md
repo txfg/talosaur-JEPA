@@ -276,6 +276,8 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 
 Before every dive, work through [`docs/PREDIVE.md`](docs/PREDIVE.md): leak test, trim for fresh or salt water, clock, storage, lamp, sensors, arm switch. [`docs/SENSORS.md`](docs/SENSORS.md) is the plan for the depth sensor, compass and IMU, and the echosounder still to add.
 
+[`docs/DIGITAL_TWIN.md`](docs/DIGITAL_TWIN.md) is the plan for a digital twin of the vehicle, with the unchanged onboard software in the loop, and for the pool session that calibrates the twin to the real vehicle. It compares the candidate simulators and their licences.
+
 Four tools support it:
 - **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.
 - **Replay** (`scripts/replay.py`): runs the identical pipeline on recorded video at the Pi's measured frame rate and writes an annotated video, telemetry and an encounter log. This is how guidance, including the "same animal" similarity threshold, is tuned without the vehicle.

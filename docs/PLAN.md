@@ -420,7 +420,7 @@ talosaur-JEPA/
 │   └── pi/            setup_pi5.sh, calibrate_camera.py
 ├── tests/                        # pytest, CPU-only, synthetic data
 ├── reports/                      # generated dataset / eval / benchmark reports (small, committed)
-├── docs/                         # PLAN.md, DATASETS.md, PI5.md, SEARCH.md, TWILIGHT_ZONE.md, SENSORS.md, PREDIVE.md, THIRD_PARTY_NOTICES.md
+├── docs/                         # PLAN.md, DATASETS.md, PI5.md, SEARCH.md, TWILIGHT_ZONE.md, SENSORS.md, PREDIVE.md, DIGITAL_TWIN.md, THIRD_PARTY_NOTICES.md
 └── .github/workflows/ci.yml      # ruff + pytest (CPU) on every push
 ```
 
@@ -505,3 +505,4 @@ Added after the M6 review: one animal at a time with appearance memory, continuo
 10. **Echosounder.** *Proposed: **add a downward single-beam echosounder**, rated to at least 300 m for the Gulf.* Without one, the vehicle finds a lake bottom only by touching it. The software side is built: `altitude_m` in the nav input, the `min_altitude_m` limit, and the limit kept for `floor_hold_s` when the sounder loses the bottom. Model still to choose (`docs/SENSORS.md` §2).
 11. **Arm switch.** *Built: **magnetic reed switch on GPIO 17, magnet on = armed**.* The mission starts after a countdown once the depth sensor reads "in the water", and magnet off stops it at once (`docs/PI5.md` §4). Say if you would rather arm another way, for example from the autopilot.
 12. **Where the sensors connect.** *Default: **through the autopilot**, which also owns depth and heading hold and the leak, battery and depth failsafes (`docs/SENSORS.md` §5–6).* This follows from decision 3.
+13. **Digital twin.** *Default: **our own Python twin first**, sharing one vehicle description file with the pool calibration; ArduSub SITL through its JSON interface once ArduSub is chosen; Stonefish (GPL-3.0, needs an OpenGL 4.3 GPU) for camera realism* (`docs/DIGITAL_TWIN.md`). Milestones T1–T3 don't depend on the autopilot choice.
