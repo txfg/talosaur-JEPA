@@ -206,9 +206,15 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
   - `marginal_rate` and `long_run_rate`: what staying earns now against what the mission earns on
     average. The animal is left when the first falls below the second (§12).
 - `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
-- `nav` echoes the navigation input in use (below). `search`, during SEARCH only, shows the search
-  mode (`profile`, `extensive` or `intensive`), the depth band being worked, the leg heading, and the
-  band with the best detection rate so far.
+- `nav` echoes the navigation input in use (below).
+- `search`, during SEARCH only (docs/SEARCH.md §2), shows:
+  - the mode: `profile`, `hover` and `relocate` during the dusk and dawn crossings, `transect` and
+    `drift` otherwise, and `loops` or `move_on` after an animal;
+  - `crossing`: whether the migrators are crossing;
+  - `layer_hold_m`: the depth held after a drifter;
+  - the depth band being worked, the leg heading, and the band with the best rate of finds so far.
+- `curiosity` shows whether the vehicle is taking a closer look (`looking`) and at what (`cue`:
+  `flash` or `weak`), with running counts of looks and flashes.
 - At the end of each encounter, a `kind: "encounter"` message summarises it (§12).
 
 **Navigation input (optional, strongly recommended).** The search planner (docs/SEARCH.md) needs
@@ -427,6 +433,8 @@ under `guidance.encounter` in `pi5.yaml`; the reasoning and evidence are in docs
    `kind: "encounter"` message on the backends. Each line records:
    - the animal's id;
    - why it ended (`enough`, `no_shot`, `budget`, `fled`, `lost` or `shutdown`);
+   - how the animal behaved: `swarm`, `mobile` or `drifter`, which decides where the search goes
+     next (docs/SEARCH.md §2);
    - total time on that animal (`engaged_s`), time well framed (`good_s`) and time in FILM;
    - the footage value it was credited with, and its novelty weight;
    - the best-framed moment (`best_t`);

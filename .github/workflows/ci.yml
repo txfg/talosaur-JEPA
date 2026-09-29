@@ -45,4 +45,4 @@ jobs:
       # onnx only builds the tiny toy model the tests run; the Pi itself needs just onnxruntime
       - run: pip install -e ".[pi,dev]" onnx
       - name: Onboard + guidance tests without torch
-        run: pytest -q tests/test_onboard_no_torch.py tests/test_m6_guidance.py tests/test_m6_encounters.py tests/test_m6_search.py tests/test_m6_nav.py tests/test_m6_onboard.py
+        run: pytest -q tests/test_onboard_no_torch.py tests/test_m6_guidance.py tests/test_m6_encounters.py tests/test_m6_search.py tests/test_m6_curiosity.py tests/test_m6_nav.py tests/test_m6_onboard.py

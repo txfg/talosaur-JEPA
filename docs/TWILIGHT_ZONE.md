@@ -258,9 +258,8 @@ Horizontal movement is for:
   salp or pyrosome bloom), with a radius larger than the animals' avoidance distance (tens of
   metres).
 
-The software today searches with long straight legs and a tight local search after each find
-(docs/SEARCH.md §2). It has no drift or hover periods yet, and its local search is the same for
-every animal (§9).
+The software does this now (docs/SEARCH.md §2): it hovers through the crossings, runs transects
+with silent drifts otherwise, and chooses its next move by how the last animal behaved (§7.4).
 
 ### 7.4 Curiosity: what to turn toward
 
@@ -382,19 +381,26 @@ Per encounter, label the animal group afterwards from the video (§2 table). The
 | When does the layer cross 200 m at the site? | A depth-time plot of finds (dive report) against the local sunset and sunrise. |
 | How patchy is it sideways? | Encounter spacing along transects. |
 
-## 9. What this asks of the software (next steps, in order)
+## 9. What this asks of the software
 
-These change the vehicle's behaviour, not the ML model.
+These change the vehicle's behaviour, not the ML model. Items 1–3 are done (docs/SEARCH.md §2).
 
-1. **Hover and drift periods.** During the dusk and dawn crossings, the planner should hold depth
-   and heading with minimal thrust instead of transecting. Outside the crossings, it should
-   alternate transects with silent drifts.
-2. **Local search by animal group.** Widening loops after swarming animals; moving on beyond the
-   avoidance halo after solitary fishes and squids; holding depth along the layer after
-   gelatinous animals. This needs a group label from the model (plankton/gelatinous/fish/squid) —
-   the first ML requirement this plan creates.
-3. **Flash cues.** Detect bioluminescent flashes with the lamp off, as brief local brightenings
-   in the camera stream. Turn toward them, creep, and ramp the lamp.
+1. **Hover and drift periods. Done.**
+   - Through the dusk and dawn crossings, the vehicle hovers (holds depth and heading, no forward
+     thrust) with a short slow leg every 7 min.
+   - Otherwise it runs 10-min transects, each followed by a 4-min silent drift.
+2. **Next move by how the animal behaved. Done**, without an ML label. The encounter is
+   classified from what the vehicle saw:
+   - **swarm** (several animals in view): widening loops around the spot;
+   - **mobile** (it swam away or was lost): move on 40 m, beyond the avoidance halo;
+   - **drifter** (it stayed): hold its depth and carry on along the layer.
+
+   A group label from the model (fish, squid, jelly, crustacean) would sharpen this later.
+3. **Curiosity. Done.**
+   - The vehicle turns toward and creeps up to bioluminescent flashes (brief local brightenings in
+     blue-green) and to weak detections that persist.
+   - The lamp is left as it is, since a light coming on scares animals.
+   - Whether the Camera Module 3 registers real flashes at depth is untested (§8).
 4. **Upward-looking silhouettes by day.** A camera tilt or a second camera.
 5. **Temperature input.** Log it and show the thermocline in the dive report.
 

@@ -13,6 +13,7 @@ ONBOARD_MODULES = [
     "talosaur.guidance.backends",
     "talosaur.guidance.camera_model",
     "talosaur.guidance.controller",
+    "talosaur.guidance.curiosity",
     "talosaur.guidance.encounters",
     "talosaur.guidance.heatmap",
     "talosaur.guidance.lights",

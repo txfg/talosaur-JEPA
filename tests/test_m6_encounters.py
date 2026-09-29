@@ -267,6 +267,25 @@ def test_pipeline_stops_approaching_an_animal_that_swims_away():
     assert tele["state"] == "TRACK" and cmd.surge <= 0.0  # still filming it, no longer chasing
 
 
+def test_encounters_are_classified_by_how_the_animal_behaved():
+    tgt = Target(True, 0.5, 0.5, 0.15, 2.0, 0.95, n_blobs=1)
+    crowd = Target(True, 0.5, 0.5, 0.15, 2.0, 0.95, n_blobs=5)  # several animals in view
+    calm = TrackState(active=True, confirmed=True, size=0.15, size_rate=0.0, hits=10)
+    away = TrackState(active=True, confirmed=True, size=0.15, size_rate=-0.3, hits=10)
+
+    def film(target, track, reason, frames=50):
+        m = EncounterManager(EncounterConfig())
+        m.start(0.0, None)
+        for k in range(frames):
+            m.observe(0.2 * (k + 1), "FILM", target, 0.95, None, track)
+        return m.end(0.2 * frames, reason)["behaviour"]
+
+    assert film(crowd, calm, "enough") == "swarm"  # krill, salps, pyrosomes
+    assert film(tgt, away, "lost") == "mobile"  # swam away and got lost: fishes, squids, shrimps
+    assert film(tgt, calm, "lost") == "mobile"
+    assert film(tgt, calm, "enough") == "drifter"  # stayed put: jellies, siphonophores
+
+
 def test_mvt_gives_up_without_a_good_shot():
     import math
 

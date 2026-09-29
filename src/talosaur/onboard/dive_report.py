@@ -115,6 +115,22 @@ def summarise(
     else:
         out.append("No depth in the telemetry (no navigation input): detections cannot be placed by depth.")
 
+    # --- curiosity: looks at flashes and weak detections, and how many turned into an animal
+    looks: dict[str, list[bool]] = defaultdict(list)  # cue -> did the look end in ACQUIRE?
+    cur_cue, prev_looking = None, False
+    for f in frames:
+        cs = f.get("curiosity") or {}
+        looking = bool(cs.get("looking"))
+        if looking and not prev_looking:
+            cur_cue = cs.get("cue") or "?"
+            looks[cur_cue].append(False)
+        if prev_looking and "state:ACQUIRE" in (f.get("events") or []):
+            looks[cur_cue][-1] = True
+        prev_looking = looking
+    if looks:
+        parts = [f"{len(v)} at {k} (of which {sum(v)} became a find)" for k, v in sorted(looks.items())]
+        out += ["", "Curiosity looks: " + "; ".join(parts) + "."]
+
     # --- how long each animal was filmed and why it was left
     out += ["", "## Encounters", ""]
     if encounters:
@@ -133,6 +149,20 @@ def summarise(
             eng = [float(e.get("engaged_s") or 0.0) for e in es]
             good = [float(e.get("good_s") or 0.0) for e in es]
             out.append(f"| {r} | {len(es)} | {np.median(eng):.1f} | {np.median(good):.1f} |")
+        by_kind: dict[str, list[dict]] = defaultdict(list)
+        for e in encounters:
+            by_kind[e.get("behaviour") or "?"].append(e)
+        out += [
+            "",
+            "How the animals behaved (it decides where the search goes next):",
+            "",
+            "| behaviour | encounters | median time on animal (s) | next |",
+            "|---|---|---|---|",
+        ]
+        nxt = {"swarm": "loops around the spot", "mobile": "move on", "drifter": "hold its depth", "?": "-"}
+        for k, es in sorted(by_kind.items(), key=lambda kv: -len(kv[1])):
+            eng = [float(e.get("engaged_s") or 0.0) for e in es]
+            out.append(f"| {k} | {len(es)} | {np.median(eng):.1f} | {nxt.get(k, '-')} |")
         weights = [float(e["novelty_weight"]) for e in encounters if e.get("novelty_weight") is not None]
         if weights:
             out += ["", f"Novelty weights (5th / 50th / 95th percentile): {_pct(weights)}."]

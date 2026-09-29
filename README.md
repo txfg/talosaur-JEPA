@@ -260,7 +260,9 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
 5. A state machine runs SEARCH → ACQUIRE → TRACK → FILM → LOST, plus RELEASE.
 6. **Search** ([`docs/SEARCH.md`](docs/SEARCH.md); the marine biology and the 200 m field plan behind it: [`docs/TWILIGHT_ZONE.md`](docs/TWILIGHT_ZONE.md)). With depth and heading from the vehicle (`nav:` in the config):
    - it profiles the depth range once, then works the depth bands where animals are detected most, with a time-of-day prior for the dusk and dawn migration;
-   - it swims long legs, switches to a tight local search after each find because animals come in patches, and steers away from water already covered.
+   - while the migrators cross its depth at dusk and dawn it hovers and lets them come; otherwise it runs slow 10-min transects with silent drifts, steering away from water already covered;
+   - after an animal, its next move depends on how the animal behaved: loops around a swarm, moves on after one that swam away, holds the depth of a drifting jelly;
+   - it turns toward bioluminescent flashes and faint repeated detections for a closer look.
 
    Without navigation input it scans and hops.
 7. **One animal at a time.** A foraging-theory rule, the marginal value theorem, decides how long each animal is worth filming. The sub leaves when more footage of this animal is worth less than the mission's average rate of finding and filming others. Animals that never give a good shot are left early; `encounter.max_s` (180 s) caps the rest. An animal that swims away is never chased: the sub stops approaching, keeps it in view if it can, and leaves it alone if it gets away. Then the sub backs off, turns away and swims on (RELEASE), and looks for a *different* animal.

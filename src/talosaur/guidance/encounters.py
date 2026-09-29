@@ -71,6 +71,8 @@ class EncounterConfig:
     bg_alpha: float = 0.05  # background mean update rate per frame
     max_memory: int = 64
     archive_size: int = 512  # appearances of every animal filmed this run, for the novelty weight
+    swarm_min: int = 3  # "swarm": at least this many animals in view ...
+    swarm_share: float = 0.3  # ... in at least this share of the frames the animal was seen
 
 
 @dataclass
@@ -96,6 +98,7 @@ class Encounter:
     framed_ema: float = 1.0  # recent fraction of time well framed (optimistic start: approaching)
     flee_s: float = 0.0
     fled_t: float | None = None  # last time it was fleeing
+    crowded: int = 0  # frames with at least swarm_min animals in view
     film_s: float = 0.0
     frames: int = 0
     seen: int = 0
@@ -307,6 +310,8 @@ class EncounterManager:
         if found:
             enc.seen += 1
             enc.size_sum += target.size
+            if getattr(target, "n_blobs", 1) >= c.swarm_min:
+                enc.crowded += 1
             centred = 1.0 - min(1.0, 2.0 * float(np.hypot(target.cx - 0.5, target.cy - 0.5)))
             score = frame_prob * centred * min(1.0, target.size / 0.2)
             if score > enc.best_score:
@@ -324,6 +329,7 @@ class EncounterManager:
             reason = "fled"  # it got away: leave it alone, like an animal the vehicle chose to leave
         engaged = enc.engaged_s(t)
         exhausted = reason in LEAVE_REASONS or (c.max_s > 0 and engaged >= c.max_s)
+        behaviour = self.behaviour(enc, reason)
         desc = enc.descriptor()
         value = enc.value(c.tau_s)
         self.value_done += value
@@ -350,4 +356,17 @@ class EncounterManager:
             "best_t": None if enc.best_t is None else round(enc.best_t, 3),
             "appearance": desc is not None,
             "done": exhausted,
+            "behaviour": behaviour,
         }
+
+    def behaviour(self, enc: Encounter, reason: str) -> str:
+        """How the animal behaved, which decides where to search next (docs/TWILIGHT_ZONE.md
+        §7.4): ``swarm`` (several animals in view: krill, salps, pyrosomes), ``mobile`` (it swam
+        away or was lost: fishes, squids, shrimps) or ``drifter`` (it stayed: jellies,
+        siphonophores, ctenophores)."""
+        c = self.cfg
+        if enc.seen and enc.crowded >= c.swarm_share * enc.seen:
+            return "swarm"
+        if enc.fled_t is not None or reason in ("fled", "lost"):
+            return "mobile"
+        return "drifter"

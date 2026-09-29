@@ -248,19 +248,42 @@ Everything is built from what stays reliable underwater: **depth** (pressure sen
      set the clock before each dive; otherwise the time-of-day prior points at the wrong depths.
      The telemetry's `t` is the app clock, which does not depend on this.
 
-### Horizontal: composite search
+### Horizontal: follow the animals' rhythm (docs/TWILIGHT_ZONE.md §7.3–7.4)
 
-- **Extensive mode.** Long straight relocation legs (`leg_s`, 90 s, randomised ±30%) at a slow
-  speed (`surge`), with large turns (`turn_deg`).
-- **Intensive mode.** Any find, and the end of every encounter, switch to a tight local
-  search: short legs (`ars_leg_s`), sharper turns, slower. Animals come in patches, so where there
-  is one there are likely more. If nothing turns up within `giveup_s` (2 min), it switches back to
-  long legs.
+- **During the dusk and dawn crossings: hover** (`hover_in_crossings`). The migrating layer comes
+  to the vehicle, at a few centimetres per second.
+  - The vehicle holds depth and heading with no forward thrust for `hover_s` (7 min).
+  - Then it makes one slow leg (`relocate_s`, 2.5 min) out of its own disturbance, and hovers
+    again.
+  - A motionless vehicle frightens least. The crossing windows are the time-of-day prior's
+    `dusk_h` / `dawn_h`.
+- **Otherwise: transects and silent drifts.**
+  - A slow straight transect of `leg_s` (10 min, ±20%), like MBARI's midwater video transects.
+  - Then a drift of `drift_s` (4 min) with no forward thrust, so that shy fishes settle and come
+    back.
+  - Then a turn of about `turn_deg` (120°) toward water not visited recently.
+- **After an animal, the next move depends on how it behaved.** When an encounter ends, the
+  encounter manager classifies it (`encounters.py`):
+
+  | behaviour | how it is recognised | next move | typical animals |
+  |---|---|---|---|
+  | `swarm` | at least `swarm_min` (3) animals in view for at least 30% of the encounter | widening loops around the spot for `loop_s` (3 min), starting at 5 m and growing 5 m per turn | krill, salps, pyrosomes, pteropods |
+  | `mobile` | it swam away, or was lost | move on `move_on_m` (40 m) the way RELEASE left the vehicle pointing, beyond the avoidance halo, then the normal pattern | fishes, squids, shrimps |
+  | `drifter` | it stayed | hold its depth for `layer_hold_s` (10 min) and carry on with the normal pattern: drifters gather along the same layer | siphonophores, medusae, ctenophores |
+
+  A find that did not become an encounter gets short loops (`giveup_s`, 90 s).
+- **Curiosity** (`curiosity.py`): while searching, the vehicle turns toward and creeps up to:
+  - **bioluminescent flashes**, which show as brief, local brightenings of the picture's
+    blue-green brightness;
+  - **weak detections** that stay in the same place for 2 of 3 frames.
+
+  It looks for up to `max_s` (12 s), or until the cue has been gone for 2 s. Then there is no new
+  look for `cooldown_s` (8 s). The lamp is not changed while it looks. A confirmed animal hands
+  over to the state machine as usual.
 - **Avoid water already searched.** The planner keeps a coarse map of cells it has passed through,
   dead-reckoned in the *water* frame from heading and commanded speed. Animals drift with the same
-  water, so currents do not spoil it; only compass bias and speed error do. New legs prefer
-  headings through cells not visited recently. The map fades (`coverage_halflife_s`) because both
-  the animals and the position error move on.
+  water, so currents do not spoil it; only compass bias and speed error do. The map fades
+  (`coverage_halflife_s`) because both the animals and the position error move on.
 - **Without navigation input:** scan (turn slowly for `scan_s`) and hop (go straight for `hop_s`),
   with no depth control.
 
@@ -270,10 +293,13 @@ also the yaw and heave rates that steer toward them. Either kind of bridge works
 ### Other behaviour
 
 - **Leaving an animal.** RELEASE turns `release_turn_deg` (120°) away from the side the animal
-  was on when a heading is available; otherwise it uses a timed turn. Then it swims on and starts
-  an intensive search there for the rest of the patch. Animals already filmed are recognised and
-  skipped (docs/PI5.md §12).
+  was on when a heading is available; otherwise it uses a timed turn. The next move then depends
+  on the animal's behaviour (above). Animals already filmed are recognised and skipped
+  (docs/PI5.md §12).
 - **Approach speed** is capped (`controller.max_surge`), because fast approaches scatter animals.
+- **The simulator results in §7 predate these behaviours.** They compared the earlier legs-and-loops
+  search. The simulator models neither bioluminescence nor sustained avoidance, so it could not
+  judge hover, drift or flash cues anyway; first dives will (docs/TWILIGHT_ZONE.md §8).
 
 ## 3. How long to film each animal
 

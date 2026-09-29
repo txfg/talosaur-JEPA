@@ -139,18 +139,85 @@ def test_diel_prior_prefers_the_corridor_at_dusk_and_shallow_water_at_night():
     assert np.allclose(noon, 1.0)
 
 
-def test_intensive_search_after_a_find_then_back_to_long_legs():
-    c = SearchConfig(giveup_s=30.0)
+def _drive(p, t, seconds, depth=80.0, heading=0.0, dt=0.5, hour=12.0):
+    """A vehicle that turns to the commanded heading at 10 deg/s and holds depth; returns
+    (t, heading, [(t, mode, surge, heading, water-frame position)])."""
+    p.hour_fn = lambda: hour
+    log = []
+    for _ in range(int(round(seconds / dt))):
+        t += dt
+        nav = _nav(t, depth, heading)
+        cmd = p.command(t, nav)
+        if cmd.heading_deg is not None:
+            heading = (heading + float(np.clip(((cmd.heading_deg - heading + 180) % 360) - 180, -5, 5))) % 360
+        p.observe(t, _nav(t, depth, heading), False, cmd.surge, heading)
+        log.append((t, p.status()["mode"], cmd.surge, heading, p.pos.copy()))
+    return t, heading, log
+
+
+def test_transects_then_silent_drifts_then_a_turn_to_new_water():
+    p = SearchPlanner(SearchConfig(leg_s=60.0, drift_s=20.0, profile_first=False, seed=1))
+    t, heading, log = _drive(p, 0.0, 200.0)
+    modes = [e[1] for e in log]
+    assert {"transect", "drift"} <= set(modes)
+    assert all(e[2] == 0.0 for e in log if e[1] == "drift")  # no forward thrust while drifting
+    assert any(e[2] > 0.0 for e in log if e[1] == "transect")
+    headings = [e[3] for e in log if e[1] == "transect"]
+    assert max(abs(((h - headings[0] + 180) % 360) - 180) for h in headings) >= 45  # turned after the drift
+
+
+def test_hovers_while_the_layer_crosses_and_relocates_now_and_then():
+    p = SearchPlanner(SearchConfig(hover_s=60.0, relocate_s=20.0, profile_first=False))
+    t, heading, log = _drive(p, 0.0, 200.0, hour=18.5)  # sunset: migrators crossing the corridor
+    modes = [e[1] for e in log]
+    assert p.status()["crossing"] and {"hover", "relocate"} <= set(modes)
+    hover_share = sum(m == "hover" for m in modes) / len(modes)
+    assert hover_share > 0.6 and all(e[2] == 0.0 for e in log if e[1] == "hover")
+    t, heading, log = _drive(p, t, 30.0, heading=heading, hour=22.0)  # night: transects again
+    assert log[-1][1] in ("transect", "drift")
+
+
+def test_after_a_swarm_it_loops_widening_around_the_spot():
+    c = SearchConfig(profile_first=False, loop_r0_m=4.0, loop_spacing_m=4.0, loop_s=240.0)
     p = SearchPlanner(c)
-    t, heading = 0.0, 0.0
-    p.command(t, _nav(t, heading=heading))
-    assert p.mode == "extensive"
-    p.observe(1.0, _nav(1.0), True, 0.3, heading)  # an animal
-    assert p.mode == "intensive"
-    cmd = p.command(1.5, _nav(1.5, heading=heading))
-    assert cmd.surge <= c.ars_surge
-    p.command(40.0, _nav(40.0, heading=heading))  # nothing for 39 s: give up
-    assert p.mode == "extensive"
+    p.after_encounter(0.0, "swarm", 80.0)
+    t, heading, log = _drive(p, 0.0, 240.0)
+    assert all(e[1] == "loops" for e in log[:-1])
+    dist = [float(np.hypot(*(e[4] - p.local_center))) for e in log]
+    assert max(dist) < 20.0  # still close to the spot after 4 min ...
+    assert np.mean(dist[-60:]) > np.mean(dist[20:80])  # ... on widening loops ...
+    turned = sum(abs(((b[3] - a[3] + 180) % 360) - 180) for a, b in zip(log, log[1:]))
+    assert turned > 360  # ... going round it
+
+
+def test_after_an_animal_that_swam_away_it_moves_on_beyond_the_halo():
+    c = SearchConfig(profile_first=False, move_on_m=30.0)
+    p = SearchPlanner(c)
+    p.after_encounter(0.0, "mobile", 80.0)
+    start = p.pos.copy()
+    t, heading, log = _drive(p, 0.0, 400.0, heading=90.0)
+    moving = [e for e in log if e[1] == "move_on"]
+    assert moving and all(e[3] == 90.0 for e in moving)  # straight on, the way RELEASE left it pointing
+    after = next(e for e in log if e[1] != "move_on")  # then the normal pattern ...
+    assert float(np.hypot(*(after[4] - start))) >= 30.0  # ... only beyond the avoidance halo
+
+
+def test_after_a_drifter_it_keeps_to_that_depth():
+    c = SearchConfig(profile_first=False, layer_hold_s=100.0)
+    p = SearchPlanner(c)
+    p.after_encounter(0.0, "drifter", 87.0)
+    p.hour_fn = lambda: 12.0
+    p.observe(0.5, _nav(0.5, 60.0), False, 0.0, 0.0)
+    depths = [p.command(t, _nav(t, 60.0)).depth_m for t in np.arange(1.0, 99.0, 7.0)]
+    assert all(d == 87.0 for d in depths) and p.status()["layer_hold_m"] == 87.0
+    assert p.command(101.0, _nav(101.0, 60.0)).depth_m in set(p.bands)  # then back to the bands
+
+
+def test_a_find_without_an_encounter_gets_short_loops_then_the_pattern_resumes():
+    p = SearchPlanner(SearchConfig(profile_first=False, giveup_s=30.0))
+    p.on_find(0.0)
+    t, heading, log = _drive(p, 0.0, 40.0)
+    assert log[0][1] == "loops" and log[-1][1] in ("transect", "drift")
 
 
 def test_new_legs_avoid_water_already_searched():
@@ -159,7 +226,7 @@ def test_new_legs_avoid_water_already_searched():
     for _ in range(600):  # 5 min heading north through the water
         t += 0.5
         p.observe(t, _nav(t, heading=0.0), False, 0.35, 0.0)
-    p._new_leg(t, heading=180.0)  # coming back south: do not retrace the northward track
+    p._new_leg(t, heading=180.0, duration=600.0)  # coming back south: do not retrace the northward track
     assert abs(((p.leg_heading - 180.0) + 180) % 360 - 180) >= 45
 
 
@@ -172,13 +239,13 @@ def test_marine_snow_does_not_count_as_a_find_but_an_animal_does():
     for k in range(100):  # 20 s with a speck every 5th frame
         t += 0.2
         g.step(t, np.array([-4.0]), speck if k % 5 == 0 else empty, nav=_nav(t, depth=55.0))
-    assert g.search.events.sum() == 0.0 and g.search.mode == "extensive"
+    assert g.search.events.sum() == 0.0 and g.search.local is None
     fish = empty.copy()
     fish[3, 6] = fish[3, 7] = 3.0
     for _ in range(10):  # an animal in view for 2 s
         t += 0.2
         g.step(t, np.array([2.0]), fish, nav=_nav(t, depth=55.0))
-    assert g.search.events.sum() == pytest.approx(1.0, abs=0.01) and g.search.mode == "intensive"
+    assert g.search.events.sum() == pytest.approx(1.0, abs=0.01) and g.search.local == "loops"
 
 
 def test_search_telemetry_and_setpoints_in_the_pipeline():

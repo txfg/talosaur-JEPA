@@ -73,9 +73,16 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     diel_prior: true                # dusk/dawn: favour the 100-200 m migration corridor; night: shallow
     sunrise_h: 6.5                  # sunrise and sunset at the dive site on the dive date, as times on
     sunset_h: 18.5                  # the Pi's clock (set the clock before the dive: docs/SEARCH.md)
-    surge: 0.35                     # slow search speed
-    leg_s: 90                       # long relocation legs ...
-    giveup_s: 120                   # ... tight local search after each find, for this long
+    surge: 0.35                     # slow transect speed (~0.2 m/s; fast approaches scatter animals)
+    leg_s: 600                      # a straight transect of ~10 min ...
+    drift_s: 240                    # ... then a silent drift (no thrust) so shy fishes settle back
+    hover_in_crossings: true        # dusk / dawn crossings: hover and let the migrating layer come to you ...
+    hover_s: 420                    # ... 7 min at a time ...
+    relocate_s: 150                 # ... then one slow leg out of the vehicle's own disturbance
+    loop_s: 180                     # after a swarm or bloom: widening loops around the spot this long
+    move_on_m: 40                   # after an animal that swam away: go this far before searching again
+    layer_hold_s: 600               # after a drifter (jelly-like): keep to its depth this long
+    giveup_s: 90                    # a find that did not become an encounter: short loops this long
   lights:                           # animals avoid light, red included; dim far-red disturbs least (docs/SEARCH.md)
     search: 0.0                     # lamp level while searching when the camera can see by ambient light ...
     search_dark: 0.3                # ... and when it cannot (frame brightness with the lamp off < dark_luma)
@@ -84,6 +91,13 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     track: null                     # close to an animal: null = no change (light coming on makes animals flee) ...
     near_size: 0.08                 # ... or a level to ramp up to once the animal is this big
     ramp_s: 5                       # an increase from off to full takes this long, never a sudden switch-on
+
+  curiosity:                        # turn toward things worth a closer look while searching (docs/TWILIGHT_ZONE.md 7.4)
+    flashes: true                   # bioluminescent flashes: brief local brightenings in blue-green
+    weak: true                      # weak detections that stay in the same place for a few frames
+    max_s: 12                       # look at most this long ...
+    cooldown_s: 8                   # ... then search on for at least this long before the next look
+    creep: 0.15                     # speed while closing in
 
 nav:                                # depth / heading / turn rate from the autopilot bridge (docs/PI5.md section 5)
   kind: none                        # none | udp  (JSON datagrams: {"depth_m":..., "heading_deg":..., "yaw_rate_dps":...})

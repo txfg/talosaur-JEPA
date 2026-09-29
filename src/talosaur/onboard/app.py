@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from talosaur.guidance.backends import make_backend
+from talosaur.guidance.curiosity import glow_grid
 from talosaur.guidance.novelty import NoveltyDetector
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
 from talosaur.onboard import sysinfo
@@ -163,8 +164,9 @@ def run(
                 guidance.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
             nav = guidance.nav_source.poll(fr.t)
             luma = float(fr.rgb.mean()) / 255.0  # scene brightness: lamp control (guidance/lights.py)
+            glow = glow_grid(fr.rgb)  # blue-green brightness grid: bioluminescent flashes (curiosity.py)
             cmd, tele, events = guidance.step(
-                fr.t, out.frame, out.heat, out.emb, out.tokens, nav=nav, luma=luma
+                fr.t, out.frame, out.heat, out.emb, out.tokens, nav=nav, luma=luma, glow=glow
             )
             for ev in events:
                 if ev == "encounter_start":

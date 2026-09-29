@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
+from talosaur.guidance.curiosity import glow_grid
 from talosaur.guidance.heatmap import sigmoid
 from talosaur.guidance.novelty import NoveltyDetector
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
@@ -138,7 +139,15 @@ def main(argv=None) -> int:
             o = runner.run(preprocess(fr.rgb, (H, W)))
             if guid.novelty is None and gcfg.novelty:
                 guid.novelty = NoveltyDetector(int(np.asarray(o.emb).size))
-            _, tele, _ = guid.step(fr.t, o.frame, o.heat, o.emb, o.tokens, luma=float(fr.rgb.mean()) / 255.0)
+            _, tele, _ = guid.step(
+                fr.t,
+                o.frame,
+                o.heat,
+                o.emb,
+                o.tokens,
+                luma=float(fr.rgb.mean()) / 255.0,
+                glow=glow_grid(fr.rgb),
+            )
             tf.write(json.dumps(tele) + "\n")
             if "encounter_summary" in tele:
                 encounters.append(tele["encounter_summary"])

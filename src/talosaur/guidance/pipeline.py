@@ -15,6 +15,7 @@ import numpy as np
 
 from talosaur.guidance.camera_model import CameraModel
 from talosaur.guidance.controller import Command, Controller, ControllerConfig
+from talosaur.guidance.curiosity import Curiosity, CuriosityConfig
 from talosaur.guidance.encounters import EncounterConfig, EncounterManager
 from talosaur.guidance.heatmap import Target, find_blobs, order_blobs, sigmoid
 from talosaur.guidance.lights import LightPolicy, LightsConfig
@@ -41,6 +42,7 @@ class GuidanceConfig:
     encounter: EncounterConfig = field(default_factory=EncounterConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     lights: LightsConfig = field(default_factory=LightsConfig)
+    curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> GuidanceConfig:
@@ -53,6 +55,7 @@ class GuidanceConfig:
             "encounter": EncounterConfig,
             "search": SearchConfig,
             "lights": LightsConfig,
+            "curiosity": CuriosityConfig,
         }
         kw: dict[str, Any] = {}
         for k, v in d.items():
@@ -84,6 +87,7 @@ class Guidance:
         self.nav: NavState | None = None
         self.search = SearchPlanner(self.cfg.search)
         self.lights = LightPolicy(self.cfg.lights)
+        self.curiosity = Curiosity(self.cfg.curiosity)
 
     def step(
         self,
@@ -94,10 +98,12 @@ class Guidance:
         tokens=None,
         nav: NavState | None = None,
         luma: float | None = None,
+        glow: np.ndarray | None = None,
     ) -> tuple[Command, dict[str, Any], list[str]]:
         """One frame. ``tokens``: the model's patch tokens (h, w, D) if the export has them;
         ``nav``: depth / heading / turn rate if the vehicle provides them (search planning);
-        ``luma``: the frame's mean brightness, 0-1 (lamp control: lights.py)."""
+        ``luma``: the frame's mean brightness, 0-1 (lamp control: lights.py); ``glow``: a coarse
+        grid of the frame's blue-green brightness (``curiosity.glow_grid``), for flashes."""
         self.nav = nav if nav is not None and nav.fresh(t) else None
         c = self.cfg
         enc = self.encounters
@@ -144,7 +150,9 @@ class Guidance:
                 enc.start(t, desc)
             elif ev == "encounter_end":
                 summary = enc.end(t, self.fsm.end_reason or "lost")
-                self.search.on_find(t)  # animals come in patches: search around here next
+                depth = None if self.nav is None else self.nav.depth(t)
+                self.search.after_encounter(t, summary.get("behaviour"), depth)  # where to search next
+                self.curiosity.pause(t, c.fsm.release_s + c.curiosity.cooldown_s)  # not the same animal
         st = self.fsm.state
         if st == State.RELEASE and st0 != State.RELEASE:
             self.release_away = -1.0 if self.last_yaw > 0 else 1.0  # turn away from the animal's side
@@ -158,7 +166,19 @@ class Guidance:
         if st in ENGAGED:
             enc.observe(t, st.value, target, frame_prob, desc, track, own_surge=self.controller.last.surge)
 
-        if st == State.SEARCH:
+        look = self.curiosity.update(t, st == State.SEARCH, prob, glow)
+        if st == State.SEARCH and look is not None:  # something worth a closer look: turn and creep
+            cc = c.curiosity
+            lyaw, lpitch = c.camera.angles(*look)
+            cmd = self.controller.shape(
+                Command(
+                    float(np.clip(cc.yaw_kp * lyaw, -0.6, 0.6)),
+                    float(np.clip(cc.pitch_kp * lpitch, -0.4, 0.4)),
+                    cc.creep if abs(lyaw) < 15.0 else 0.0,
+                ),
+                t,
+            )
+        elif st == State.SEARCH:
             cmd = self.controller.shape(self.search.command(t, self.nav), t)
         elif st == State.ACQUIRE:
             cmd = self.controller.hold(t)
@@ -204,6 +224,7 @@ class Guidance:
             "nav": None if self.nav is None else self.nav.as_dict(),
             "lights": self.lights.status(),
             "search": self.search.status() if st == State.SEARCH else None,
+            "curiosity": self.curiosity.status(),
         }
         if summary:
             tele["encounter_summary"] = summary
