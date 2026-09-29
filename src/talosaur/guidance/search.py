@@ -54,6 +54,7 @@ class SearchConfig:
     profile_first: bool = True  # sweep the whole range once before choosing bands
     stall_s: float = 60.0  # a depth not reached after this long without progress counts as reached ...
     min_altitude_m: float = 5.0  # ... e.g. the bottom: never ask to go closer to it (needs an altimeter)
+    floor_hold_s: float = 300.0  # sounder silent (bottom lost, or too close): keep its limit this long
     dwell_s: float = 180.0  # time in a chosen band before choosing again
     halflife_s: float = 1200.0  # forgetting of detection statistics (layers migrate)
     prior_per_min: float = 0.05  # prior detection rate per band
@@ -116,7 +117,8 @@ class SearchPlanner:
         self._goal_best = math.inf  # profile progress: closest approach to the current goal ...
         self._goal_t = 0.0  # ... and when it last improved
         self._depth_cmd_t: float | None = None  # last time the planner steered depth (SEARCH only)
-        self.floor_m: float | None = None  # deepest depth allowed by the altimeter, if any
+        self.floor_m: float | None = None  # deepest depth allowed by the altimeter, if any ...
+        self._floor_t = 0.0  # ... measured at this time
         self.phase = "transect"  # transect | drift | hover | relocate
         self.phase_until = 0.0
         self.local: str | None = None  # after a find: loops | move_on (None: the normal pattern)
@@ -176,7 +178,10 @@ class SearchPlanner:
         if detected:
             self.last_detect_t = t
         alt = None if nav is None or not nav.fresh(t) else nav.altitude_m
-        self.floor_m = None if depth is None or alt is None else depth + alt - c.min_altitude_m
+        if depth is not None and alt is not None:
+            self.floor_m, self._floor_t = depth + alt - c.min_altitude_m, t
+        elif self.floor_m is not None and t - self._floor_t > c.floor_hold_s:
+            self.floor_m = None  # a sounder can lose the bottom when too close to it: forget only slowly
         if depth is not None:
             self.last_depth = depth
             if searching:
@@ -428,4 +433,5 @@ class SearchPlanner:
             "leg_heading": None if self.leg_heading is None else round(self.leg_heading, 1),
             "best_band_m": float(self.bands[best]),
             "best_rate_per_min": round(float(r[best]), 3),
+            "floor_m": None if self.floor_m is None else round(self.floor_m, 1),
         }

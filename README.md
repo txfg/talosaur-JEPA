@@ -271,7 +271,10 @@ The **onboard loop** (`python -m talosaur.onboard.app --config configs/onboard/p
    - Every encounter is logged to `logs/encounters.jsonl`, with why it ended and where it is in the video.
 8. A controller issues normalised yaw-rate / heave / surge requests, heading and depth setpoints, and a lamp level. The lamp stays off while the camera can see by ambient light and goes dim when it cannot. It is never switched on suddenly or turned up near an animal, since light coming on is what makes fish flee. Commands have a deadband, rate limits and a hard stand-off.
 9. **Recording** runs continuously for the whole run, in 5-minute crash-safe segments. A low-disk guard only ever deletes segments without animals.
-10. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge; depth and heading come back over UDP. The autopilot choice is still open.
+10. Telemetry and commands go out as JSONL and JSON over UDP, for an autopilot bridge. Depth, heading, turn rate, altitude (echosounder) and water temperature come back over UDP, from one sender or several. The autopilot choice is still open.
+11. **Arm switch.** A magnetic reed switch on GPIO 17: the vehicle never thrusts on deck. With the magnet off, every command is zero and the lamp is off; camera, model and recording keep running. With the magnet on, the mission starts after a countdown, once the depth sensor says the vehicle is in the water. Taking the magnet off stops it at once. Each start is a fresh mission.
+
+Before every dive, work through [`docs/PREDIVE.md`](docs/PREDIVE.md): leak test, trim for fresh or salt water, clock, storage, lamp, sensors, arm switch. [`docs/SENSORS.md`](docs/SENSORS.md) is the plan for the depth sensor, compass and IMU, and the echosounder still to add.
 
 Four tools support it:
 - **Toy model** (`python -m talosaur.onboard.toy_model`): a warm-colour detector in the export format, for checking the camera → guidance → recording → UDP chain in the pool before a trained model exists.

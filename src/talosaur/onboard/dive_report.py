@@ -20,6 +20,7 @@ import numpy as np
 from talosaur.utils.io import load_yaml
 
 SEARCHING = ("SEARCH", "ACQUIRE")
+BEFORE_START = ("SAFE", "ARMED")  # arm switch off, or armed and waiting to start (onboard/arming.py)
 
 
 def load(paths: list[str | Path]) -> tuple[list[dict], list[dict]]:
@@ -60,12 +61,20 @@ def summarise(
         return "No guidance telemetry found."
     t = np.array([f["t"] for f in frames], float)
     dt = np.clip(np.diff(t, append=t[-1]), 0.0, 1.0)  # a gap in the log counts at most 1 s
-    hours = max(float(t[-1] - t[0]), 1e-9) / 3600.0
+    total_h = max(float(t[-1] - t[0]), 1e-9) / 3600.0
+    before = float(sum(d for f, d in zip(frames, dt) if f["state"] in BEFORE_START))
+    hours = max(total_h - before / 3600.0, 1e-9)  # rates are per hour of mission
     out = [
         "# Dive report",
         "",
-        f"- {len(frames)} frames over {hours * 60:.1f} min ({len(frames) / max(hours * 3600, 1e-9):.1f} fps)",
+        f"- {len(frames)} frames over {total_h * 60:.1f} min ({len(frames) / max(total_h * 3600, 1e-9):.1f} fps)",
     ]
+    if before > 0:
+        starts = sum("mission_start" in (f.get("events") or []) for f in frames)
+        out.append(
+            f"- mission time {hours * 60:.1f} min in {starts} mission(s); {before / 60:.1f} min outside a mission "
+            "(arm switch off, or armed and waiting to be in the water)"
+        )
 
     state_s: Counter = Counter()
     for f, d in zip(frames, dt):
@@ -114,6 +123,28 @@ def summarise(
             out.append(f"| {b:.0f}–{b + band_m:.0f} m | {m:.1f} | {band_n[b]} | {rate} |")
     else:
         out.append("No depth in the telemetry (no navigation input): detections cannot be placed by depth.")
+
+    # --- water temperature by depth (from the depth sensor, if the bridge sends temp_c): the
+    # thermocline often explains where the animals' layer sits (docs/TWILIGHT_ZONE.md 7.7)
+    temps: dict[float, list[float]] = defaultdict(list)
+    for f in frames:
+        nv = f.get("nav") or {}
+        if nv.get("depth_m") is not None and nv.get("temp_c") is not None:
+            temps[float(np.floor(nv["depth_m"] / band_m) * band_m)].append(float(nv["temp_c"]))
+    if temps:
+        bands = sorted(temps)
+        med = [float(np.median(temps[b])) for b in bands]
+        out += ["", "Water temperature by depth (all states, descent included):", ""]
+        out += ["| depth band | median temperature (°C) | samples |", "|---|---|---|"]
+        out += [f"| {b:.0f}–{b + band_m:.0f} m | {m:.2f} | {len(temps[b])} |" for b, m in zip(bands, med)]
+        steps = [(abs(med[i + 1] - med[i]), i) for i in range(len(bands) - 1)]
+        if steps and max(steps)[0] >= 0.5:
+            dT, i = max(steps)
+            out += [
+                "",
+                f"Steepest change (thermocline): {dT:.1f} °C between {bands[i]:.0f}–{bands[i] + band_m:.0f} m "
+                f"and {bands[i + 1]:.0f}–{bands[i + 1] + band_m:.0f} m.",
+            ]
 
     # --- curiosity: looks at flashes and weak detections, and how many turned into an animal
     looks: dict[str, list[bool]] = defaultdict(list)  # cue -> did the look end in ACQUIRE?

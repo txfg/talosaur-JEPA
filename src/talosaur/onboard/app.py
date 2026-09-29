@@ -10,6 +10,10 @@ backends (JSONL log and/or JSON over UDP). Video is recorded for the whole run b
 (``recording.mode: continuous``, in segments). Each animal is
 filmed for at most ``guidance.encounter.max_s``; every encounter (animal, duration, reason it
 ended, video files) is appended to ``encounter_log`` (default logs/encounters.jsonl).
+
+With an arm switch (``arming:``, talosaur.onboard.arming) guidance only steers while the switch
+is on and the vehicle is in the water; otherwise every command is zero and the lamp is off, while
+the camera, model and recording keep running.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from talosaur.guidance.curiosity import glow_grid
 from talosaur.guidance.novelty import NoveltyDetector
 from talosaur.guidance.pipeline import Guidance, GuidanceConfig
 from talosaur.onboard import sysinfo
+from talosaur.onboard.arming import RUN, make_arming, safe_output
 from talosaur.onboard.camera import Picamera2Source, SyntheticSource, VideoFileSource
 from talosaur.onboard.nav_input import make_nav
 from talosaur.onboard.recorder import ContinuousRecorder, NullRecorder, Picamera2Recorder
@@ -37,6 +42,12 @@ from talosaur.utils.io import load_yaml
 from talosaur.utils.log import get_logger
 
 log = get_logger("onboard")
+
+
+def _new_guidance(cfg: dict, nav_source) -> Guidance:
+    g = Guidance(GuidanceConfig.from_dict(cfg.get("guidance")))  # novelty sized on the first frame
+    g.nav_source = nav_source  # depth / heading from the autopilot bridge, if any
+    return g
 
 
 def build(cfg: dict, source_override: str | None = None, video: str | None = None):
@@ -97,17 +108,25 @@ def build(cfg: dict, source_override: str | None = None, video: str | None = Non
         except Exception:
             source.close()  # release the camera, or the next start fails with "device busy"
             raise
-    guidance = Guidance(GuidanceConfig.from_dict(cfg.get("guidance")))  # novelty sized on the first frame
+    guidance = _new_guidance(cfg, make_nav(cfg.get("nav")))
     backend = make_backend(cfg.get("backends", [{"kind": "jsonl", "path": "logs/guidance.jsonl"}]))
-    guidance.nav_source = make_nav(cfg.get("nav"))  # depth / heading from the autopilot bridge, if any
     return runner, source, recorder, guidance, backend
 
 
 def run(
     cfg: dict, source_override: str | None = None, video: str | None = None, max_frames: int | None = None
 ) -> dict:
-    runner, source, recorder, guidance, backend = build(cfg, source_override, video)
+    arming = make_arming(cfg.get("arming"))  # before the camera opens: a config error fails early
+    try:
+        runner, source, recorder, guidance, backend = build(cfg, source_override, video)
+    except Exception:
+        arming.close()
+        raise
     H, W = runner.spec.input_hw
+    live = (source_override or cfg.get("source", {}).get("kind", "picamera2")) == "picamera2"
+    if arming.kind == "none" and live:
+        log.warning("no arm switch (arming.kind none): commands are live from the first frame")
+    mission = {"active": False, "n": 0}
     stop = {"flag": False}
 
     def _sig(*_):
@@ -137,7 +156,7 @@ def run(
         # those segments as animal footage, which the low-disk guard never deletes
         files = recorder.files_between(summary["t_start"], summary["t_end"])
         recorder.protect_since = None
-        rec = {"kind": "encounter", **summary, "recordings": files}
+        rec = {"kind": "encounter", **summary, "mission": mission["n"], "recordings": files}
         encounters.append(rec)
         backend.publish(rec)
         if enc_log:
@@ -160,14 +179,34 @@ def run(
             t0 = time.perf_counter()
             out = runner.run(preprocess(fr.rgb, (H, W)))
             t_inf = time.perf_counter() - t0
-            if guidance.novelty is None and guidance.cfg.novelty:
-                guidance.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
             nav = guidance.nav_source.poll(fr.t)
-            luma = float(fr.rgb.mean()) / 255.0  # scene brightness: lamp control (guidance/lights.py)
-            glow = glow_grid(fr.rgb)  # blue-green brightness grid: bioluminescent flashes (curiosity.py)
-            cmd, tele, events = guidance.step(
-                fr.t, out.frame, out.heat, out.emb, out.tokens, nav=nav, luma=luma, glow=glow
-            )
+            arm_events = arming.update(fr.t, None if nav is None else nav.depth(fr.t))
+            if arming.state == RUN:
+                if not mission["active"]:  # every mission starts afresh: nothing from deck or an earlier run
+                    if mission["n"]:
+                        guidance = _new_guidance(cfg, guidance.nav_source)
+                    mission["active"], mission["n"] = True, mission["n"] + 1
+                if guidance.novelty is None and guidance.cfg.novelty:
+                    guidance.novelty = NoveltyDetector(int(np.asarray(out.emb).size))
+                luma = float(fr.rgb.mean()) / 255.0  # scene brightness: lamp control (guidance/lights.py)
+                glow = glow_grid(fr.rgb)  # blue-green brightness grid: bioluminescent flashes (curiosity.py)
+                cmd, tele, events = guidance.step(
+                    fr.t, out.frame, out.heat, out.emb, out.tokens, nav=nav, luma=luma, glow=glow
+                )
+            else:
+                if mission["active"]:  # switched off: stop now, and close the animal being filmed
+                    mission["active"] = False
+                    last = guidance.close(fr.t, "disarmed")
+                    if last:
+                        _encounter_done(last)
+                    recorder.stop(fr.t)  # events mode: end the clip; continuous mode records on
+                cmd, tele = safe_output(
+                    fr.t, out.frame, out.heat, guidance.cfg.frame_index, arming.state, nav
+                )
+                events = []
+            if arming.kind != "none":
+                tele["events"] = arm_events + list(tele["events"])
+                tele["arming"] = arming.status(fr.t)
             for ev in events:
                 if ev == "encounter_start":
                     recorder.protect_since = fr.t
@@ -211,10 +250,12 @@ def run(
         source.close()
         backend.close()
         guidance.nav_source.close()
+        arming.close()
         for s, hnd in old_handlers.items():
             signal.signal(s, hnd)
     summary = {
         "frames": n,
+        "missions": mission["n"],
         "states": states,
         "clips": n_clips,
         "segments": len(getattr(recorder, "segments", [])),

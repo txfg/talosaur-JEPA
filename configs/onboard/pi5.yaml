@@ -69,7 +69,8 @@ guidance:                           # tuning guide: docs/PI5.md section 11
     strategy: adaptive              # adaptive | depth | legs | scan (the old turn-in-place)
     min_depth_m: 20                 # the band the planner may use (the autopilot enforces its own hard limits)
     max_depth_m: 200                # a lake shallower than this is fine: the profile stops at the bottom
-    min_altitude_m: 5               # with an altimeter: never ask to go closer to the bottom than this
+    min_altitude_m: 5               # with an altimeter: never ask to go closer to the bottom than this ...
+    floor_hold_s: 300               # ... and keep that limit this long when the sounder loses the bottom
     diel_prior: true                # dusk/dawn: favour the 100-200 m migration corridor; night: shallow
     sunrise_h: 6.5                  # sunrise and sunset at the dive site on the dive date, as times on
     sunset_h: 18.5                  # the Pi's clock (set the clock before the dive: docs/SEARCH.md)
@@ -101,7 +102,15 @@ guidance:                           # tuning guide: docs/PI5.md section 11
 
 nav:                                # depth / heading / turn rate from the autopilot bridge (docs/PI5.md section 5)
   kind: none                        # none | udp  (JSON datagrams: {"depth_m":..., "heading_deg":..., "yaw_rate_dps":...})
-  port: 14601
+  port: 14601                       # also "altitude_m" (echosounder) and "temp_c"; senders may split fields (docs/SENSORS.md)
+
+arming:                             # arm switch: the vehicle never thrusts on deck (docs/PI5.md section 4)
+  kind: gpio                        # gpio (magnetic reed switch) | file (armed while `path` exists) | none (bench only)
+  pin: 17                           # BCM GPIO 17 (header pin 11); the switch connects it to ground (pin 9)
+  invert: false                     # true for a normally-closed switch
+  arm_delay_s: 20                   # after the magnet goes on: time to put the vehicle in the water ...
+  start_depth_m: 0.2                # ... then start once the nav input's depth is at least this (null: countdown only) ...
+  start_hold_s: 3                   # ... for this long; magnet off at any time = thrusters stop
 
 backends:
   - {kind: jsonl, path: logs/guidance.jsonl}

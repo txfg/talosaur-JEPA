@@ -28,6 +28,7 @@ ONBOARD_MODULES = [
     "talosaur.sim.vehicle",
     "talosaur.sim.world",
     "talosaur.onboard.app",
+    "talosaur.onboard.arming",
     "talosaur.onboard.benchmark",
     "talosaur.onboard.camera",
     "talosaur.onboard.dive_report",

@@ -6,7 +6,7 @@ WITH_NCNN=0; [[ "${1:-}" == "--ncnn" ]] && WITH_NCNN=1
 
 echo "== system packages (picamera2 comes from apt, not pip)"
 sudo apt update
-sudo apt install -y python3-picamera2 python3-venv python3-pip ffmpeg
+sudo apt install -y python3-picamera2 python3-gpiozero python3-venv python3-pip ffmpeg   # gpiozero: arm switch
 
 echo "== venv that can see the apt-installed picamera2"
 python3 -m venv --system-site-packages ~/talosaur-venv

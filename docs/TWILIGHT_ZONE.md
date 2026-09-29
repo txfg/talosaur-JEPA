@@ -325,11 +325,14 @@ Across all groups:
 Without a DVL, horizontal position is the water-relative position dead-reckoned from heading and
 commanded speed. That is the right frame here, because the animals drift with the same water.
 
-Two practical points:
+Three practical points:
 1. **Calibrate the compass with the thrusters running.** Motor currents bend the magnetic field,
    so the heading error changes with thrust. A tilt-compensated IMU compass helps.
-2. **Add a temperature sensor.** It is cheap and shows the thermocline and the water mass, which
-   explain where the layer sits.
+2. **Log the water temperature.** Most depth sensors measure it; send it as `temp_c` and the dive
+   report shows the thermocline. The thermocline and the water mass help explain where the layer
+   sits.
+3. **Add a downward echosounder for lakes.** Without it the vehicle finds the bottom only by
+   touching it (docs/SENSORS.md §2).
 
 Log per dive:
 - depth, temperature, heading, time, moon phase, cloud cover;
@@ -383,7 +386,7 @@ Per encounter, label the animal group afterwards from the video (§2 table). The
 
 ## 9. What this asks of the software
 
-These change the vehicle's behaviour, not the ML model. Items 1–3 are done (docs/SEARCH.md §2).
+These change the vehicle's behaviour, not the ML model. Items 1–3 and 5 are done (docs/SEARCH.md §2).
 
 1. **Hover and drift periods. Done.**
    - Through the dusk and dawn crossings, the vehicle hovers (holds depth and heading, no forward
@@ -402,7 +405,8 @@ These change the vehicle's behaviour, not the ML model. Items 1–3 are done (do
    - The lamp is left as it is, since a light coming on scares animals.
    - Whether the Camera Module 3 registers real flashes at depth is untested (§8).
 4. **Upward-looking silhouettes by day.** A camera tilt or a second camera.
-5. **Temperature input.** Log it and show the thermocline in the dive report.
+5. **Temperature input. Done.** `temp_c` in the navigation input is logged, and the dive report
+   shows the temperature by depth band and the steepest change (docs/SENSORS.md §3).
 
 ## 10. References
 

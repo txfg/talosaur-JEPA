@@ -15,7 +15,8 @@ flowchart LR
   rgb --> model["ViT-Ti + heads<br/>ORT int8 / ncnn fp16"]
   model -- "frame logit, heatmap, patch tokens" --> guid["guidance<br/>target → bearing → Kalman → FSM → controller<br/>+ search planner"]
   guid -- "JSONL / UDP JSON" --> ap["autopilot bridge<br/>(your choice, pending)"]
-  ap -- "depth, heading (UDP JSON)" --> guid
+  ap -- "depth, heading, altitude, temperature (UDP JSON)" --> guid
+  sw["arm switch<br/>(magnetic reed, GPIO 17)"] --> guid
   guid -- "encounter events" --> rec["H.264 recorder<br/>(software, continuous segments)"]
   isp -- "main 1280×720 YUV420" --> rec
 ```
@@ -55,10 +56,10 @@ python -m talosaur.onboard.app --export-dir exports/toy --model toy_112x208 --ru
    source ~/talosaur-venv/bin/activate
    ```
 
-   The script installs `python3-picamera2` and `ffmpeg` from apt, and makes a venv with
-   `--system-site-packages` so picamera2 (apt-only) is visible. It then installs `.[pi]`
-   (numpy, pyyaml, onnxruntime) and **no torch**, and proves the onboard modules import with
-   torch blocked.
+   The script installs `python3-picamera2`, `python3-gpiozero` (the arm switch, §4) and `ffmpeg`
+   from apt, and makes a venv with `--system-site-packages` so the apt packages are visible. It
+   then installs `.[pi]` (numpy, pyyaml, onnxruntime) and **no torch**, and proves the onboard
+   modules import with torch blocked.
 4. Copy the export folder from the training box:
    `rsync -av exports/tiny_ctx <user>@<pi-host>:~/talosaur-JEPA/exports/`.
    The folder holds `manifest.json`, the `.onnx` files and `ncnn/`. The runtime reads everything
@@ -162,6 +163,39 @@ in a new session's files. Another open-source Pi underwater camera (FishCam) ran
 without a restart, and there five errors in a row ended recording until the next boot
 (docs/SEARCH.md §1.6).
 
+**Arm switch: the vehicle never thrusts on deck.** The app starts at boot and records from the
+first frame, but guidance only steers once the vehicle is armed *and* in the water
+(`arming:` in `pi5.yaml`, `talosaur/onboard/arming.py`).
+
+- **Hardware.** A normally-open magnetic reed switch sits inside the hull against the wall. It is
+  wired between GPIO 17 (header pin 11) and ground (pin 9); the Pi's internal pull-up holds the
+  pin high. A magnet outside, in a holder that cannot shake loose and on a lanyard, closes it.
+  **Magnet on = armed.** A broken wire or a lost magnet reads as "off", so both stop the
+  thrusters. For a normally-closed switch set `invert: true`.
+- **States** (telemetry `state` and `arming.state`):
+  - **SAFE**, magnet off. Every command is zero and the lamp is off, since many underwater LEDs
+    overheat in air. The camera, the model and the recording keep running: the telemetry's
+    `frame_prob` and `peak` let you check camera and model on deck.
+  - **ARMED**, magnet on. A countdown (`arm_delay_s`, 20 s) gives time to put the vehicle in
+    the water. The mission then starts once the depth has read at least `start_depth_m` (0.2 m)
+    for `start_hold_s` (3 s): in the water, not on deck. Set `start_depth_m` from a float test
+    (docs/PREDIVE.md §3). `start_depth_m: null` starts after the countdown alone; use it only
+    without a depth input. Commands stay zero until the start.
+  - **RUN**, the mission: the usual SEARCH, TRACK, FILM and the rest. Magnet off at any time →
+    SAFE at once. The animal being filmed is logged with reason `disarmed`.
+- **Every RUN is a fresh mission.** Nothing from the deck or an earlier run carries over into the
+  search planner or the "already filmed" memory. Encounters carry a `mission` number. After a
+  reboot at depth with the magnet still on, the mission restarts after the countdown.
+- **Debounce.** A change must hold for `debounce_s` (0.5 s), so a knock on the magnet does
+  nothing.
+- **Pool tests over SSH.** `kind: file` arms while `/run/talosaur/arm` exists (`touch` to arm,
+  `rm` to disarm).
+- **Bench, replay and simulator.** `kind: none` removes the gate. The app warns when that is used
+  with the camera.
+- **If GPIO 17 cannot be read**, for example because gpiozero is missing, the app still starts
+  and records but stays SAFE. The reason is in `arming.fault`. The whole program never fails to
+  start over the switch, because recording must never stop.
+
 ## 5. Output: telemetry and vehicle commands
 
 The autopilot link is still undecided, so the loop publishes one JSON message per frame. It goes
@@ -197,7 +231,15 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
   `dark`, the measured ambient brightness (`ambient`, 0–1, measured with the lamp off), and
   whether a lamp-off check is running.
 - `state` is one of SEARCH, ACQUIRE, TRACK, FILM, LOST and RELEASE (moving on from an animal, §12).
-- `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame. The recording events mark where an encounter clip begins and ends; only events mode cuts files at them.
+  With an arm switch it can also be SAFE or ARMED (§4). Those rows carry `frame_prob`, `peak`, `nav`
+  and a `cmd` that is all zero with the lamp off.
+- `arming` (only with an arm switch) shows:
+  - `state`: SAFE, ARMED or RUN;
+  - `switch`: the debounced reading;
+  - `missions`: how many missions have started;
+  - while ARMED, `wait` (`countdown`, `in the water` or `no depth`) and `countdown_s`;
+  - `fault` if the switch cannot be read.
+- `events` carries `encounter_start`, `encounter_end`, `start_recording`, `stop_recording` and `state:<NAME>`, in that order within a frame. The arm switch's `armed`, `disarmed` and `mission_start` come first. The recording events mark where an encounter clip begins and ends; only events mode cuts files at them.
 - `recording` says whether video is being written. It is always true in continuous mode unless the disk guard had to stop.
 - `encounter` is the animal being filmed:
   - `id` and `engaged_s`;
@@ -208,6 +250,7 @@ in the config. A bridge process turns the commands into whatever your vehicle sp
 - `reid` gives the target's appearance similarity to animals already filmed (`sim`), how many filmed animals in view were skipped, and how many are remembered.
 - `nav` echoes the navigation input in use (below).
 - `search`, during SEARCH only (docs/SEARCH.md §2), shows:
+  - `floor_m`: the deepest depth allowed by the echosounder, if there is one (docs/SENSORS.md §2);
   - the mode: `profile`, `hover` and `relocate` during the dusk and dawn crossings, `transect` and
     `drift` otherwise, and `loops` or `move_on` after an animal;
   - `crossing`: whether the migrators are crossing;
@@ -222,13 +265,19 @@ depth and heading from the vehicle. The autopilot bridge sends them as small JSO
 port 14601, at 5–50 Hz:
 
 ```json
-{"depth_m": 152.3, "heading_deg": 41.0, "yaw_rate_dps": -2.5, "altitude_m": null}
+{"depth_m": 152.3, "heading_deg": 41.0, "yaw_rate_dps": -2.5, "altitude_m": null, "temp_c": 17.4}
 ```
 
 - Enable it with `nav: {kind: udp, port: 14601}` in `pi5.yaml`.
-- Any field may be missing or `null`. Heading may be magnetic or gyro-integrated; it only has to be
-  consistent during the dive.
-- A sample older than 1.5 s (`nav.valid_for_s`) is treated as missing.
+- `altitude_m` comes from a downward echosounder and `temp_c` from the depth sensor
+  (docs/SENSORS.md).
+- Heading may be magnetic or gyro-integrated; it only has to be consistent during the dive.
+- **Several senders may share the port**, for example the autopilot bridge for depth and heading
+  and a separate reader for the echosounder:
+  - each field keeps its latest value;
+  - a field left out of a datagram keeps its previous value;
+  - `null` clears it.
+- A field not updated for 1.5 s (`nav.valid_for_s`) is treated as missing.
 - Without navigation input, search falls back to a scan-then-hop pattern with no depth control.
 - `kind: mavlink` raises `NotImplementedError` until the autopilot is chosen.
 
@@ -241,7 +290,9 @@ python3 -c 'import json, socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM
 ```
 
 **Safety stays with the autopilot.** Depth and altitude limits, obstacle avoidance, leak and
-battery failsafes all belong there. Vision only sends requests, already clipped, slew-limited and
+battery failsafes all belong there (docs/SENSORS.md §5). The bridge should drive the thrusters
+only while `arming.state` is RUN. Outside RUN every command is zero anyway, so this is a second,
+independent check. Vision only sends requests, already clipped, slew-limited and
 with a hard stand-off. `search.min_depth_m` / `max_depth_m` only bound the depths the planner asks
 for; they are not a safety limit. The bridge should treat a message older than ~0.5 s (by receive
 time) as "all zero", so a crashed or stalled vision process never leaves a stale command active.
@@ -496,10 +547,13 @@ with replay on labelled clips, or with `scripts/eval.py`.
    - `iperiod` / `framerate` on the encoder;
    - the HDR modes.
 3. The ncnn int8 conversion (§13).
-4. The in-water calibration workflow and the flat-port focus rule of thumb.
-5. Camera controls in the dark: gain limits and noise at depth.
-6. **Recognising animals with the trained model** (§12). Tested only with synthetic features and the toy model's colours. How well JEPA patch tokens separate real animals, and the right `same_sim`, must come from your footage.
-7. **Search and leave-rule settings** (docs/SEARCH.md). Tested only in the simulator, whose animal
+4. **The arm switch on GPIO 17** through gpiozero on the Pi 5. It is tested only against a stand-in
+   for gpiozero. On the bench, check that `arming.switch` follows the magnet and that an unplugged
+   lead reads as off (docs/PREDIVE.md §1).
+5. The in-water calibration workflow and the flat-port focus rule of thumb.
+6. Camera controls in the dark: gain limits and noise at depth.
+7. **Recognising animals with the trained model** (§12). Tested only with synthetic features and the toy model's colours. How well JEPA patch tokens separate real animals, and the right `same_sim`, must come from your footage.
+8. **Search and leave-rule settings** (docs/SEARCH.md). Tested only in the simulator, whose animal
    densities, detection ranges and reactions to the vehicle are assumptions. In particular:
    - what the camera detects with the lights off at your depths (`lights.search: 0.0` relies on it);
    - the vehicle's real speed per unit of `surge` (`search.speed_mps_per_unit`), for the coverage map;

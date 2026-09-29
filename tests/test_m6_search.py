@@ -87,6 +87,18 @@ def test_keeps_off_the_bottom_with_an_altimeter():
     assert cmd.depth_m == pytest.approx(28.0) and cmd.heave > 0  # rise to 5 m above it
 
 
+def test_keeps_the_bottom_limit_when_the_sounder_loses_the_bottom():
+    """Too close for the sounder's minimum range, or a bad ping: the limit stays for floor_hold_s."""
+    p = SearchPlanner(SearchConfig(min_altitude_m=5.0, floor_hold_s=60.0))
+    p.observe(1.0, NavState(1.0, depth_m=30.0, heading_deg=0.0, altitude_m=3.0), False, 0.0, 0.0)
+    silent = NavState(30.0, depth_m=31.0, heading_deg=0.0)  # no altitude any more
+    p.observe(30.0, silent, False, 0.0, 0.0)
+    assert p.command(30.0, silent).depth_m == pytest.approx(28.0) and p.status()["floor_m"] == 28.0
+    later = NavState(62.0, depth_m=31.0, heading_deg=0.0)
+    p.observe(62.0, later, False, 0.0, 0.0)
+    assert p.floor_m is None and p.command(62.0, later).depth_m == 200.0  # forgotten after 60 s
+
+
 def test_depth_control_without_a_heading():
     p = SearchPlanner(SearchConfig())
     nav = NavState(1.0, depth_m=60.0)  # a depth sensor but no compass
@@ -385,3 +397,26 @@ def test_closed_loop_episode_runs_and_scores(tmp_path):
     assert len(frames) == 1500 and len(encounters) == r["encounters"]
     text = dive_report(frames, encounters)
     assert "| depth band |" in text and "## Encounters" in text and "Lamp: mean level" in text
+
+
+def test_dive_report_mission_time_and_water_temperature():
+    """Frames before the start (arm switch) do not dilute the per-hour rates; the depth sensor's
+    temperature shows the thermocline."""
+    frames = [{"t": float(k), "state": "SAFE", "events": [], "cmd": {}} for k in range(60)]
+    frames[0]["events"] = ["armed"]
+    for k in range(60, 660):
+        depth = 20.0 + (k - 60) / 5.0  # descending 0.2 m/s from 20 m to 140 m
+        temp = 26.0 if depth < 60 else (18.0 if depth >= 70 else 21.0)  # the sharpest step at 60 m
+        f = {
+            "t": float(k),
+            "state": "SEARCH",
+            "events": [],
+            "cmd": {},
+            "nav": {"depth_m": depth, "temp_c": temp},
+        }
+        frames.append(f)
+    frames[60]["events"] = ["mission_start"]
+    text = dive_report(frames, [])
+    assert "mission time 10.0 min in 1 mission(s); 1.0 min outside a mission" in text
+    assert "| 60–70 m | 21.00 |" in text
+    assert "Steepest change (thermocline): 5.0 °C between 50–60 m and 60–70 m" in text

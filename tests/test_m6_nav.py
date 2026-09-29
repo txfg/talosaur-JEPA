@@ -52,3 +52,35 @@ def test_make_nav_variants():
         make_nav({"kind": "mavlink"})
     with pytest.raises(ValueError):
         make_nav({"kind": "sextant"})
+
+
+def test_udp_nav_merges_fields_from_several_senders():
+    """The autopilot bridge sends depth and heading, an echosounder reader sends altitude: each
+    field keeps its latest value and goes stale on its own."""
+    nav = UdpNavSource("127.0.0.1", 0, valid_for_s=1.0)
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    def send_and_poll(msg: dict, t: float, check):
+        tx.sendto(json.dumps(msg).encode(), ("127.0.0.1", nav.port))
+        s = None
+        for _ in range(100):  # datagrams on loopback arrive almost at once
+            s = nav.poll(t)
+            if s is not None and check(s):
+                break
+        return s
+
+    try:
+        s = send_and_poll(
+            {"depth_m": 50.0, "heading_deg": 10.0, "temp_c": 18.5}, 1.0, lambda s: s.depth_m == 50.0
+        )
+        assert s.temp_c == 18.5 and s.altitude_m is None
+        s = send_and_poll({"altitude_m": 4.0}, 1.5, lambda s: s.altitude_m == 4.0)
+        assert s.depth_m == 50.0 and s.heading_deg == 10.0  # not wiped by the other sender
+        s = send_and_poll({"altitude_m": None}, 1.8, lambda s: s.altitude_m is None)
+        assert s.depth_m == 50.0  # null clears only that field
+        s = send_and_poll({"altitude_m": 6.0}, 2.5, lambda s: s.altitude_m == 6.0)
+        assert s.depth_m is None and s.heading_deg is None and s.fresh(2.5)  # depth is 1.5 s old: stale
+        assert nav.poll(3.6) is None  # everything stale
+    finally:
+        tx.close()
+        nav.close()

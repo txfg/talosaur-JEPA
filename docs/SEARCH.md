@@ -222,7 +222,9 @@ Everything is built from what stays reliable underwater: **depth** (pressure sen
      for `stall_s` (60 s), because of the bottom or the autopilot's own limit, the planner takes
      that depth as the bottom of the range. In a 40 m lake it then works the bands down to 40 m.
    - **With an altimeter** (`altitude_m` in the nav input) it never asks to go closer to the
-     bottom than `min_altitude_m` (5 m).
+     bottom than `min_altitude_m` (5 m). If the sounder goes silent, for instance too close to the
+     bottom to read it, that limit is kept for `floor_hold_s` (5 min). Without a sounder the
+     profile only finds the bottom by stalling on it, so lakes need one (docs/SENSORS.md §2).
 2. **Choose bands by Thompson sampling.** Each band's detection rate has a Gamma–Poisson
    posterior. The planner samples from it, goes to the best sample, and stays `dwell_s` (3 min)
    before choosing again.

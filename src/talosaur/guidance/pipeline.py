@@ -230,11 +230,12 @@ class Guidance:
             tele["encounter_summary"] = summary
         return cmd, tele, events
 
-    def close(self, t: float) -> dict | None:
-        """End an encounter still open when the program stops; returns its summary."""
+    def close(self, t: float, reason: str = "shutdown") -> dict | None:
+        """End an encounter still open when the program stops (or the arm switch is turned off:
+        ``reason="disarmed"``); returns its summary."""
         if not self.encounters.active:
             return None
-        return self.encounters.end(t, "shutdown")
+        return self.encounters.end(t, reason)
 
     def config_dict(self) -> dict:
         return asdict(self.cfg)

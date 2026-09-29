@@ -20,6 +20,7 @@ class NavState:
     heading_deg: float | None = None  # 0-360, any consistent reference (magnetic is fine)
     yaw_rate_dps: float | None = None  # positive = turning right
     altitude_m: float | None = None  # above the bottom, if an altimeter / echo sounder exists
+    temp_c: float | None = None  # water temperature (most depth sensors measure it): logged, not steered by
     valid_for_s: float = 1.5
 
     def fresh(self, t: float) -> bool:

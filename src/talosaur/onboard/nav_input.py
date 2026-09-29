@@ -1,12 +1,14 @@
-"""Navigation input for the onboard loop: depth, heading, turn rate (and altitude if available).
+"""Navigation input for the onboard loop: depth, heading, turn rate, altitude and water temperature.
 
 The autopilot is still undecided, so the default is the mirror image of the command output: the
 autopilot bridge sends small JSON datagrams to a UDP port, e.g.
 
-  {"depth_m": 152.3, "heading_deg": 41.0, "yaw_rate_dps": -2.5, "altitude_m": null}
+  {"depth_m": 152.3, "heading_deg": 41.0, "yaw_rate_dps": -2.5, "altitude_m": null, "temp_c": 17.4}
 
-at 5-50 Hz. Missing fields are fine. A MAVLink source (ATTITUDE + depth) can be added here once
-the vehicle stack is chosen.
+at 5-50 Hz. Several senders may share the port (say the autopilot bridge for depth and heading, a
+separate echosounder reader for altitude): each field keeps its latest value and goes stale on its
+own after ``valid_for_s``. A field left out of a datagram keeps its previous value; ``null``
+clears it. A MAVLink source (ATTITUDE + depth) can be added here once the vehicle stack is chosen.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import socket
 
 from talosaur.guidance.nav import NavState
 
-FIELDS = ("depth_m", "heading_deg", "yaw_rate_dps", "altitude_m")
+FIELDS = ("depth_m", "heading_deg", "yaw_rate_dps", "altitude_m", "temp_c")
 
 
 class NullNav:
@@ -36,11 +38,12 @@ class UdpNavSource:
         self.sock.setblocking(False)
         self.port = self.sock.getsockname()[1]
         self.valid_for_s = valid_for_s
-        self.latest: NavState | None = None
+        self.fields: dict[str, tuple[float | None, float]] = {}  # field -> (value, time received)
         self.bad = 0
 
     def poll(self, t: float) -> NavState | None:
-        """Drain pending datagrams (never blocks); the newest sample is stamped with ``t``."""
+        """Drain pending datagrams (never blocks); new values are stamped with ``t``. Returns the
+        fields still fresh, or None if none is."""
         while True:
             try:
                 data = self.sock.recv(65536)
@@ -48,12 +51,14 @@ class UdpNavSource:
                 break
             try:
                 msg = json.loads(data)
-                vals = {k: (None if msg.get(k) is None else float(msg[k])) for k in FIELDS}
+                vals = {k: (None if msg[k] is None else float(msg[k])) for k in FIELDS if k in msg}
             except (ValueError, TypeError, AttributeError):
                 self.bad += 1
                 continue
-            self.latest = NavState(t, valid_for_s=self.valid_for_s, **vals)
-        return self.latest if self.latest is not None and self.latest.fresh(t) else None
+            for k, v in vals.items():
+                self.fields[k] = (v, t)
+        fresh = {k: v for k, (v, tr) in self.fields.items() if t - tr <= self.valid_for_s}
+        return NavState(t, valid_for_s=self.valid_for_s, **fresh) if fresh else None
 
     def close(self) -> None:
         self.sock.close()

@@ -410,14 +410,17 @@ talosaur-JEPA/
 │   ├── eval/          features.py probes.py slices.py robustness.py report.py
 │   ├── export/        onnx_export.py quantize.py ncnn_convert.py parity.py
 │   ├── guidance/      heatmap.py camera_model.py tracker.py controller.py state_machine.py backends.py   # numpy only
-│   └── onboard/       runtime.py camera.py app.py benchmark.py                                           # no torch
+│   │                  pipeline.py search.py encounters.py novelty.py lights.py curiosity.py nav.py
+│   ├── onboard/       runtime.py camera.py app.py benchmark.py recorder.py nav_input.py arming.py      # no torch
+│   │                  dive_report.py sysinfo.py toy_model.py
+│   └── sim/           world.py vehicle.py camera.py run.py   # closed-loop simulator (numpy)
 ├── scripts/
 │   ├── data/          fetch_<source>.py, build_dataset.py, dataset_report.py, label_frames.py
 │   ├── train.py  eval.py  export.py  quantize.py  replay.py  viz_degrade.py  bench_train_throughput.py
 │   └── pi/            setup_pi5.sh, calibrate_camera.py
 ├── tests/                        # pytest, CPU-only, synthetic data
 ├── reports/                      # generated dataset / eval / benchmark reports (small, committed)
-├── docs/                         # PLAN.md, DATASETS.md, COMPUTE.md, PI5.md, RESULTS.md, THIRD_PARTY_NOTICES.md
+├── docs/                         # PLAN.md, DATASETS.md, PI5.md, SEARCH.md, TWILIGHT_ZONE.md, SENSORS.md, PREDIVE.md, THIRD_PARTY_NOTICES.md
 └── .github/workflows/ci.yml      # ruff + pytest (CPU) on every push
 ```
 
@@ -481,6 +484,11 @@ Added after the M6 review: one animal at a time with appearance memory, continuo
 23. **Dead reckoning without a DVL.** The "water already searched" map uses heading and commanded speed; it is only as good as the speed calibration and the compass.
 24. **Leave-rule values.** `tau_s` (how fast one animal's footage loses value) is a judgement about what the footage is for; `same_sim` depends on the trained model.
 
+**Vehicle and sensors**
+25. **The arm switch has not run on a Pi.** gpiozero on the Pi 5 is tested only against a stand-in; check it on the bench (`docs/PREDIVE.md` §1).
+26. **Sensor specifications are unchecked.** The manufacturers' sites were blocked here. The echosounder and depth-sensor figures in `docs/SENSORS.md` are requirements plus candidates to check on their datasheets.
+27. **Ultrasound and the animals.** Some herrings (shads, alewife, menhaden) detect echosounder frequencies [L]; whether any twilight-zone animal does was not checked. Measure approach distances with the sounder on and off.
+
 ---
 
 ## 11. Decisions needed from you (defaults in bold)
@@ -493,4 +501,7 @@ Added after the M6 review: one animal at a time with appearance memory, continuo
 6. **Housing port.** Flat or dome? *Default: **flat-port model + in-water calibration**.*
 7. **Existing footage.** Do you have any pool/lake video yet? It becomes the murky-freshwater test set.
 8. **Approval scope.** *Default: **build M0–M6, then check in before the optional M7–M8**.*
-9. **Navigation sensors.** *Decided: **IMU, compass and depth sensor; no DVL**.* That covers the planner's needs (depth, heading, turn rate over UDP). Horizontal position is dead-reckoned relative to the water, which is the frame the animals drift in. Calibrate the compass with the thrusters running, and consider a cheap temperature sensor (`docs/TWILIGHT_ZONE.md` §7.7).
+9. **Navigation sensors.** *Decided: **IMU, compass and depth sensor; no DVL**.* That covers the planner's needs (depth, heading, turn rate over UDP). Horizontal position is dead-reckoned relative to the water, which is the frame the animals drift in. Calibrate the compass with the thrusters running. The depth sensor's temperature goes into the dive report. The sensor plan is `docs/SENSORS.md`.
+10. **Echosounder.** *Proposed: **add a downward single-beam echosounder**, rated to at least 300 m for the Gulf.* Without one, the vehicle finds a lake bottom only by touching it. The software side is built: `altitude_m` in the nav input, the `min_altitude_m` limit, and the limit kept for `floor_hold_s` when the sounder loses the bottom. Model still to choose (`docs/SENSORS.md` §2).
+11. **Arm switch.** *Built: **magnetic reed switch on GPIO 17, magnet on = armed**.* The mission starts after a countdown once the depth sensor reads "in the water", and magnet off stops it at once (`docs/PI5.md` §4). Say if you would rather arm another way, for example from the autopilot.
+12. **Where the sensors connect.** *Default: **through the autopilot**, which also owns depth and heading hold and the leak, battery and depth failsafes (`docs/SENSORS.md` §5–6).* This follows from decision 3.

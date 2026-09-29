@@ -179,6 +179,7 @@ def _app_cfg(export_dir, tmp_path, n_frames=120):
     cfg["backends"] = [{"kind": "jsonl", "path": str(tmp_path / "tele.jsonl")}]
     cfg["encounter_log"] = str(tmp_path / "encounters.jsonl")
     cfg["stats_every_s"] = 0.0  # also exercise the periodic stats message
+    cfg["arming"] = {"kind": "none"}  # no arm switch on the test machine (test_m6_arming.py covers it)
     return cfg
 
 
@@ -248,6 +249,44 @@ def test_app_cli_overrides(toy_export, tmp_path, monkeypatch):
     assert app.main(args + ["--source", "synthetic", "--max-frames", "15", "--no-record"]) == 0
     rows = (tmp_path / "tele.jsonl").read_text().splitlines()
     assert sum(json.loads(r)["kind"] == "guidance" for r in rows) == 15
+
+
+ZERO_CMD = {"yaw_rate": 0.0, "heave": 0.0, "surge": 0.0, "heading_deg": None, "depth_m": None, "light": 0.0}
+
+
+@requires_toy
+def test_app_never_thrusts_until_the_start_and_stops_when_switched_off(toy_export, tmp_path, monkeypatch):
+    """Magnet on for frames 0-29 (mission from frame 10, after a 1 s countdown), off for 30-59,
+    on again from 60 (a second, fresh mission from frame 70). The fish is in view in frames
+    0-39 and 80-119."""
+    from talosaur.onboard import app
+    from talosaur.onboard.arming import Arming, ArmingConfig
+
+    calls = {"n": 0}
+
+    def switch():
+        calls["n"] += 1
+        return not 30 < calls["n"] <= 60
+
+    cfg = ArmingConfig(kind="file", debounce_s=0.0, arm_delay_s=1.0, start_depth_m=None)
+    monkeypatch.setattr(app, "make_arming", lambda spec: Arming(cfg, read_switch=switch))
+    summary = app.run(_app_cfg(toy_export, tmp_path))
+    assert summary["missions"] == 2
+    rows = [json.loads(line) for line in (tmp_path / "tele.jsonl").read_text().splitlines()]
+    guid = [r for r in rows if r["kind"] == "guidance"]
+    states = [r["state"] for r in guid]
+    assert (
+        states[:10] == ["ARMED"] * 10 and states[30:60] == ["SAFE"] * 30 and states[60:70] == ["ARMED"] * 10
+    )
+    assert states[10] not in ("SAFE", "ARMED") and "TRACK" in states[10:30] and "TRACK" in states[80:]
+    for r in guid[:10] + guid[30:70]:  # nothing moves and the lamp is off until the mission starts
+        assert r["cmd"] == ZERO_CMD and "frame_prob" in r and "peak" in r
+    assert guid[0]["events"][0] == "armed" and guid[10]["events"][0] == "mission_start"
+    assert guid[30]["events"][0] == "disarmed" and guid[70]["events"][0] == "mission_start"
+    assert guid[65]["arming"]["wait"] == "countdown" and guid[65]["arming"]["missions"] == 1
+    encs = [json.loads(line) for line in (tmp_path / "encounters.jsonl").read_text().splitlines()]
+    assert [(e["mission"], e["reason"]) for e in encs] == [(1, "disarmed"), (2, "shutdown")]
+    assert encs[1]["id"] == 1  # the second mission starts afresh
 
 
 # ----------------------------------------------------------------------------- fake picamera2
