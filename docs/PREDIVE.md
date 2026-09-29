@@ -44,14 +44,17 @@ for line in sys.stdin:
 **Arm switch** (thrusters connected, propellers clear of hands and cables)
 - [ ] Magnet off: `state` SAFE, `arming.switch` false, every `cmd` value zero, thrusters still.
 - [ ] Magnet on: ARMED, and `arming.countdown_s` counts down. In air it then waits
-  (`arming.wait: "in the water"`) and the thrusters stay still.
+  (`arming.wait` is `"in the water"`, or `"no depth"` without a depth input) and the thrusters
+  stay still.
 - [ ] Magnet off again: SAFE at once.
 - [ ] Unplug the switch's lead: it must read as off (SAFE). A broken wire must never arm.
 
 **Lamp**
 - [ ] Test it in a bucket of water, not in air: many underwater LEDs rely on the water to cool
   them. Check yours.
-- [ ] Each level lights, increases ramp up over `lights.ramp_s`, and the lamp is off in SAFE.
+- [ ] Each level lights when set from the bridge or autopilot. The app sends 0 in SAFE and ARMED.
+- [ ] In a pool run (RUN): in a dark frame the lamp comes on gradually over `lights.ramp_s`,
+  never suddenly.
 - [ ] The camera sees the far-red light (NoIR vs standard camera: docs/TWILIGHT_ZONE.md §7.6).
 
 **Camera**
