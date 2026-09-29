@@ -63,8 +63,8 @@ def write_report(
             )
         md += ["", "### Patch probe and steering", ""]
         md += [
-            "| backbone | patch AUROC all / dark / murky / clear | centroid err ° (median) all / dark / murky / clear | p90 ° | size log-err | peak hit | found |",
-            "|---|---|---|---|---|---|---|",
+            "| backbone | patch AUROC all / dark / murky / clear | within-image AUROC | centroid err ° (median) all / dark / murky / clear | p90 ° | size log-err | peak hit | found |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for r in rs:
             p = r.get("patch", {})
@@ -73,7 +73,7 @@ def write_report(
                 _fmt(_g(p, s, "centroid_err_deg_median")) for s in ("all", "dark", "murky", "clear")
             )
             md.append(
-                f"| {r['backbone']} | {au} | {ce} | {_fmt(_g(p, 'all', 'centroid_err_deg_p90'))} | "
+                f"| {r['backbone']} | {au} | {_fmt(_g(p, 'all', 'within_image_auroc'))} | {ce} | {_fmt(_g(p, 'all', 'centroid_err_deg_p90'))} | "
                 f"{_fmt(_g(p, 'all', 'size_log_err_median'))} | {_fmt(_g(p, 'all', 'peak_hit_rate'))} | {_fmt(_g(p, 'all', 'found_frac'))} |"
             )
         if any(r.get("frame", {}).get("by_source") for r in rs):

@@ -75,18 +75,26 @@ def enumerate_images(
     max_depth: float | None = None,
     max_images: int | None = None,
     page_size: int = 500,
+    sample_seed: int | None = None,
 ) -> list[Any]:
-    """Return fathomnet ``AImageDTO`` objects (deduplicated by uuid)."""
+    """Return fathomnet ``AImageDTO`` objects (deduplicated by uuid).
+
+    By default the first ``max_images`` in API order, which cluster in time (the first 16k MBARI
+    images below 50 m all date from 1989-2006). With ``sample_seed``, every matching image is
+    listed and ``max_images`` of them are drawn at random, reproducibly for a given listing.
+    """
+    import numpy as np
     from fathomnet import dto
     from fathomnet.api import images
 
     seen: dict[str, Any] = {}
+    cap = None if sample_seed is not None else max_images
 
     def add(batch) -> bool:
         for im in batch or []:
             if im.uuid and im.uuid not in seen and im.url:
                 seen[im.uuid] = im
-                if max_images and len(seen) >= max_images:
+                if cap and len(seen) >= cap:
                     return False
         return True
 
@@ -115,7 +123,11 @@ def enumerate_images(
             if not batch or not add(batch):
                 break
             page += 1
-    return list(seen.values())
+    out = list(seen.values())
+    if sample_seed is not None and max_images and len(out) > max_images:
+        pick = np.random.default_rng(sample_seed).choice(len(out), max_images, replace=False)
+        out = [out[i] for i in sorted(pick)]
+    return out
 
 
 def _group_id(im) -> str:
@@ -140,6 +152,7 @@ def fetch_fathomnet(
     short_side: int = 384,
     workers: int = 4,
     resolve_license: bool = True,
+    sample_seed: int | None = None,
 ) -> list[Record]:
     import requests
     from fathomnet.api import imagesetuploads, worms
@@ -158,7 +171,7 @@ def fetch_fathomnet(
     lic_cache = _JsonCache(work / "image_licenses.json")
 
     log.info("enumerating FathomNet images ...")
-    ims = enumerate_images(concepts, owner_codes, min_depth, max_depth, max_images)
+    ims = enumerate_images(concepts, owner_codes, min_depth, max_depth, max_images, sample_seed=sample_seed)
     todo = [im for im in ims if f"fathomnet:{im.uuid}" not in done]
     log.info(f"{len(ims)} images listed, {len(done)} already fetched, {len(todo)} to go")
 

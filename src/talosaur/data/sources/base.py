@@ -169,6 +169,10 @@ def safe_extract(archive: str | os.PathLike, dest: str | os.PathLike) -> Path:
             raise OSError(f"unsafe path in archive: {name}")
 
     if zipfile.is_zipfile(archive):
+        try:  # adds Deflate64 (compress_type 9) to zipfile; the Kakadu zip uses it
+            import zipfile_deflate64  # noqa: F401
+        except ImportError:
+            pass
         with zipfile.ZipFile(archive) as z:
             for n in z.namelist():
                 check(n)

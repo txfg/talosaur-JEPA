@@ -21,7 +21,7 @@ from talosaur.utils.log import get_logger
 
 log = get_logger("data.fetch")
 
-SOURCES = ["fathomnet", "noaa_oer", "deepfish", "kakadu", "river_herring", "brackish", "ozfish", "onc", "own", "synthetic"]
+SOURCES = ["fathomnet", "noaa_oer", "deepfish", "kakadu", "river_herring", "puget_sound", "brackish", "ozfish", "onc", "own", "synthetic"]
 
 __all__ = ["SOURCES", "run_fetch", "LicenseNotAccepted", "SourceInfo"]
 
@@ -107,7 +107,7 @@ def run_fetch(source: str, root: str | Path, accept: str | None, **opts: Any) ->
             )
         if not records:
             raise RuntimeError(f"{source}: found no COCO JSON (or YOLO labels) under {d}")
-    elif source == "river_herring":
+    elif source in ("river_herring", "puget_sound"):
         from talosaur.data.sources.generic import ingest_camera_traps
 
         records = ingest_camera_traps(

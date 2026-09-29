@@ -44,10 +44,12 @@ def load_images(paths, hw, root: str | Path = ".") -> np.ndarray:
     """(N, 3, H, W) float32 RGB in [0, 1], resized exactly like the Pi runtime does."""
     from PIL import Image
 
+    from talosaur.data.h5store import open_image
+
     H, W = hw
     out = []
     for p in paths:
-        with Image.open(Path(root) / p) as im:
+        with Image.open(open_image(Path(root) / p)) as im:
             im = im.convert("RGB").resize((W, H), Image.Resampling.BILINEAR)
             out.append(np.asarray(im, dtype=np.float32).transpose(2, 0, 1) / 255.0)
     return np.stack(out)

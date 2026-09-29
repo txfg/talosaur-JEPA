@@ -1,0 +1,24 @@
+name: puget_sound
+title: NOAA Puget Sound Nearshore Fish (LILA BC)
+homepage: https://lila.science/datasets/noaa-puget-sound-nearshore-fish/
+license_id: CDLA-Permissive-1.0
+accept_id: CDLA-Permissive-1.0
+license_note: >
+  "This data set is released under the Community Data License Agreement (permissive variant)"
+  (LILA page).
+attribution: NOAA Northwest Fisheries Science Center, The Nature Conservancy and Washington shellfish farms; labels by NOAA NWFSC and Microsoft AI for Good; hosted by LILA BC
+citation: >
+  Farrell DM, Ferriss B, Sanderson B, et al. A labeled data set of underwater images of fish and
+  crab species from five mesohabitats in Puget Sound WA USA. Scientific Data (2023). Data
+  collection: Ferriss B, et al. Characterizing the habitat function of bivalve aquaculture using
+  underwater video. Aquaculture Environment Interactions 13:439-54 (2021).
+access:
+  method: coco_camera_traps
+  images: https://storage.googleapis.com/public-datasets-lila/noaa-psnf/noaa_estuary_fish-images.zip
+  annotations: https://storage.googleapis.com/public-datasets-lila/noaa-psnf/noaa_estuary_fish-annotations-2023.08.19.zip
+  notes: >
+    Images zip 7,694,934,801 bytes (GCS crc32c 3MoJ+g==), annotations zip 4,437,189 bytes
+    (crc32c lFk61Q==). The COCO Camera Traps JSON labels frames without animals "empty".
+verification:
+  date: 2026-09-28
+  level: READ (LILA page; archive sizes and hashes from the GCS headers)

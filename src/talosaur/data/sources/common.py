@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from talosaur.data import h5store
 from talosaur.data.imageio import resize_short_side, save_jpeg
 from talosaur.data.licenses import train_commercial_ok
 from talosaur.data.schema import Record
@@ -44,7 +45,7 @@ def ingest_image(
     with Image.open(src) as im:
         im = ImageOps.exif_transpose(im)
         ow, oh = im.size
-        if out.exists():
+        if h5store.exists(out):
             from talosaur.data.imageio import image_size
 
             w, h = image_size(out)
@@ -60,7 +61,7 @@ def ingest_mask(src: str | Path, root: Path, source: str, rel: str, size: tuple[
 
     out_rel = str(Path(f"masks/{source}/{rel}").with_suffix(".png"))
     out = root / out_rel
-    if not out.exists():
+    if not h5store.exists(out):
         out.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as m:
             arr = np.asarray(m.convert("L")) > 0

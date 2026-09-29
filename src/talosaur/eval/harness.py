@@ -6,9 +6,10 @@ For each backbone and input size:
      -> test AUROC, AP, TPR@5% FPR, overall / per slice (dark, murky, clear) / per source,
      with bootstrap 95% CIs;
   3. **patch probe**: logistic regression on patch tokens (positives: coverage >= pos_thr;
-     negatives only where trustworthy: masks, exhaustive boxes, empty frames)
-     -> patch AUROC/AP, best IoU, and the steering metrics: centroid error (deg), size error,
-     hit rate, heatmap-max frame AUROC, overall and per slice;
+     negatives: empty patches of masked / exhaustively boxed / empty frames, plus patches
+     >= neg_margin cells from every box in other boxed images, see ``patch_negatives``)
+     -> patch AUROC/AP, within-image AUROC, best IoU, and the steering metrics: centroid error
+     (deg), size error, hit rate, heatmap-max frame AUROC, overall and per slice;
   4. the two fitted probes are saved as deployable heads (``heads_<backbone>_<H>x<W>.pt``);
   5. optional **Underwater-C** sweep: held-out synthetic degradations at severities 1-5 on test
      images, re-using the trained heads (secondary to the real slices).
@@ -25,7 +26,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from talosaur.data.labels import sample_presence_crops
+from talosaur.data.labels import patch_negatives, sample_presence_crops, within_image_auroc
 from talosaur.data.torch_datasets import LabeledFrames
 from talosaur.eval.backbones import Backbone
 from talosaur.eval.linear import fit_logreg
@@ -40,6 +41,7 @@ from talosaur.eval.metrics import (
 )
 from talosaur.models.heads import pool_meanmax
 from talosaur.utils.log import get_logger
+from talosaur.utils.seed import derive_seed
 
 log = get_logger("eval")
 SLICES = LabeledFrames.SLICES
@@ -53,6 +55,7 @@ class EvalConfig:
     max_frame_train: int = 30000
     max_patch_images_train: int = 8000
     max_patch_samples: int = 400_000
+    neg_margin: int | None = 1  # None: background only from masked / exhaustive / empty frames
     wd_grid: tuple[float, ...] = (1e-4, 1e-3, 1e-2, 1e-1)
     batch_size: int = 128
     workers: int = 8
@@ -96,7 +99,7 @@ def frame_rows(df, cfg: EvalConfig, split: str):
     rows = [labelled]
     crop_src = sub[sub["source"].isin(cfg.crop_sources) & sub["boxes"].map(len).gt(0)]
     if len(crop_src):
-        rng = np.random.default_rng((cfg.seed, split))
+        rng = np.random.default_rng(derive_seed(cfg.seed, "presence_crops", split))
         recs = []
         for _, r in crop_src.iterrows():
             for crop, lab in sample_presence_crops(
@@ -241,7 +244,7 @@ def _patch_training_set(f: Features, cfg: EvalConfig, rng) -> tuple[torch.Tensor
     n, h, w, d = f.tokens.shape
     cov = f.coverage.reshape(n, h * w)
     pos = cov >= cfg.pos_thr
-    neg = (cov <= 0.0) & f.patch_valid[:, None]
+    neg = patch_negatives(f.coverage, f.patch_valid, cfg.neg_margin).reshape(n, h * w)
     pi = np.flatnonzero(pos.reshape(-1))
     ni = np.flatnonzero(neg.reshape(-1))
     half = cfg.max_patch_samples // 2
@@ -291,6 +294,7 @@ def patch_metrics(lin, te: Features, cfg: EvalConfig, hfov: float, vfov: float) 
                 out["best_iou"], out["iou_thr"] = best_iou(
                     prob[valid_imgs], te.coverage[valid_imgs] >= cfg.pos_thr
                 )
+        out["within_image_auroc"] = within_image_auroc(prob[mask], te.coverage[mask], cfg.pos_thr)
         errs, size_err, hits = [], [], []
         for i in np.flatnonzero(mask):
             c = te.centroid[i]

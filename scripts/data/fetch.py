@@ -6,11 +6,14 @@ Examples
   python scripts/data/fetch.py synthetic   --root data --accept-license synthetic
   python scripts/data/fetch.py fathomnet   --root data --accept-license fathomnet-tou --max-images 2000
   python scripts/data/fetch.py fathomnet   --root data --accept-license fathomnet-tou --owner-codes MBARI --min-depth 100
+  python scripts/data/fetch.py fathomnet   --root data --accept-license fathomnet-tou --min-depth 2000 --max-images 20000 --sample-seed 0
   python scripts/data/fetch.py noaa_oer    --root data --accept-license noaa-public-domain --manifest dives.csv
   python scripts/data/fetch.py deepfish    --root data --accept-license CC-BY-4.0
   python scripts/data/fetch.py kakadu      --root data --accept-license CC-BY-4.0
   python scripts/data/fetch.py river_herring --root data --accept-license CDLA-Permissive-1.0 \
         --metadata herring.json --images-dir /path/to/images --max-empty 20000
+  python scripts/data/fetch.py puget_sound --root data --accept-license CDLA-Permissive-1.0 \
+        --metadata noaa_estuary_fish-2023.08.19.json --images-dir /path/to/images --max-empty 20000
   python scripts/data/fetch.py brackish    --root data --accept-license CC-BY-SA-4.0 --from-dir ~/Downloads/brackish
   python scripts/data/fetch.py own         --root data --accept-license own --from-dir ~/talosaur_dives
 """
@@ -37,6 +40,12 @@ def main(argv=None) -> int:
     ap.add_argument("--max-images", type=int, default=None)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--no-license-lookup", action="store_true", help="FathomNet: skip per-image license calls")
+    ap.add_argument(
+        "--sample-seed",
+        type=int,
+        default=None,
+        help="FathomNet: draw --max-images at random from all matches instead of taking the first ones",
+    )
     # NOAA
     ap.add_argument("--manifest", default=None, help="NOAA: CSV with a `url` column")
     ap.add_argument("--fps", type=float, default=1.0)
@@ -64,7 +73,8 @@ def main(argv=None) -> int:
         opts["short_side"] = a.short_side
     if s == "fathomnet":
         opts.update(concepts=a.concepts, owner_codes=a.owner_codes, min_depth=a.min_depth, max_depth=a.max_depth,
-                    max_images=a.max_images, workers=a.workers, resolve_license=not a.no_license_lookup)
+                    max_images=a.max_images, workers=a.workers, resolve_license=not a.no_license_lookup,
+                    sample_seed=a.sample_seed)
     elif s == "noaa_oer":
         if not a.manifest:
             ap.error("noaa_oer needs --manifest")
@@ -73,9 +83,9 @@ def main(argv=None) -> int:
         opts.update({k: v for k, v in dict(from_dir=a.from_dir, archive=a.archive, url=a.url).items() if v})
     elif s in ("kakadu", "brackish"):
         opts.update({k: v for k, v in dict(from_dir=a.from_dir, images_dir=a.images_dir).items() if v})
-    elif s == "river_herring":
+    elif s in ("river_herring", "puget_sound"):
         if not a.metadata:
-            ap.error("river_herring needs --metadata (COCO Camera Traps JSON from the LILA page)")
+            ap.error(f"{s} needs --metadata (COCO Camera Traps JSON from the LILA page)")
         opts.update(metadata=a.metadata, images_dir=a.images_dir, image_base_url=a.image_base_url,
                     max_empty=a.max_empty, max_nonempty=a.max_nonempty)
     elif s in ("ozfish", "onc", "own"):

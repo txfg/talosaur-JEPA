@@ -1,7 +1,7 @@
 # Curation for the first real training pool. Tune after reading reports/dataset/underwater_v1/report.md.
 name: underwater_v1
 root: data
-sources: [fathomnet, noaa_oer, deepfish, kakadu, river_herring, brackish, ozfish, onc, own]
+sources: [fathomnet, noaa_oer, deepfish, kakadu, river_herring, puget_sound, brackish, ozfish, onc, own]
 license_filter: none            # "commercial" keeps only images with train_commercial_ok
 metrics_max_side: 256
 thresholds: {}                  # BucketThresholds overrides (dark_lum, dim_lum, murky_clarity, ...)
@@ -24,5 +24,6 @@ source_max_frac:                # max share of the training sampling mass per so
   noaa_oer: 0.35
   fathomnet: 0.40
   river_herring: 0.15
+  puget_sound: 0.10             # a few fixed estuary cameras, like brackish
   brackish: 0.10
 seed: 0

@@ -41,6 +41,47 @@ def patch_targets(coverage: np.ndarray, pos_thr: float = 0.3, neg_thr: float = 0
     return t
 
 
+def patch_negatives(coverage: np.ndarray, patch_valid: np.ndarray, margin: int = 1) -> np.ndarray:
+    """(N, h, w) mask of patches the patch probe may use as background.
+
+    Trusted everywhere they are empty: images with masks, exhaustive boxes, or no animal. In an
+    image with non-exhaustive boxes (FathomNet, Kakadu, ...), patches at least ``margin`` cells
+    from every box are used too, the same "touches no box" rule as the presence crops. Without
+    them all background would come from other datasets, and a probe could separate animal from
+    background by telling the datasets apart. ``margin=None`` keeps only the trusted images.
+    """
+    cov = np.asarray(coverage)
+    valid = np.asarray(patch_valid, dtype=bool).reshape(-1, 1, 1)
+    neg = (cov <= 0.0) & valid
+    if margin is None:
+        return neg
+    near = cov > 0
+    grown = near.copy()
+    h, w = cov.shape[1:]
+    for dy in range(-margin, margin + 1):
+        for dx in range(-margin, margin + 1):
+            src = near[:, max(0, -dy) : h - max(0, dy), max(0, -dx) : w - max(0, dx)]
+            grown[:, max(0, dy) : h - max(0, -dy), max(0, dx) : w - max(0, -dx)] |= src
+    has_box = near.reshape(len(cov), -1).any(1).reshape(-1, 1, 1)
+    return neg | (~grown & has_box)
+
+
+def within_image_auroc(scores: np.ndarray, coverage: np.ndarray, pos_thr: float = 0.3) -> float:
+    """Mean over images of the AUROC between animal patches and that image's empty patches.
+
+    Unlike a pooled patch AUROC it can't be raised by scoring whole images or datasets higher,
+    which is what steering needs: the animal must stand out from its own background.
+    """
+    from talosaur.eval.metrics import roc_auc
+
+    vals = []
+    for s, c in zip(np.asarray(scores), np.asarray(coverage)):
+        pos, neg = c >= pos_thr, c <= 0.0
+        if pos.any() and neg.any():
+            vals.append(roc_auc(np.r_[np.ones(pos.sum()), np.zeros(neg.sum())], np.r_[s[pos], s[neg]]))
+    return float(np.mean(vals)) if vals else float("nan")
+
+
 def box_centroid_and_size(boxes, animal=None) -> tuple[float, float, float] | None:
     """Area-weighted centroid (cx, cy) and sqrt(total area) of the animal boxes, normalised."""
     bs = [b for b, a in zip(boxes, animal if animal is not None else [True] * len(boxes)) if a]

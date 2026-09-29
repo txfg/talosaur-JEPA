@@ -21,6 +21,7 @@ No URL below was guessed. Every fetcher in `talosaur.data.sources` will print th
 | **DeepFish** (JCU) | **frame probe** (fish/no-fish); patch probe (masks) | tropical coastal, daylight, mostly clear | 39,766 frame labels, 3,200 points, 620 masks | **CC BY 4.0** | READ |
 | **Kakadu freshwater fish** | patch probe; pretraining; **freshwater** | freshwater billabongs | 82,904 COCO boxes, 23 species | **CC BY 4.0** | READ (GitHub README) |
 | **MIT Sea Grant River Herring** (LILA) | **frame probe**; **dark slice** | freshwater river, **~35% night** | ~262k frames, ~162k reviewed empty | **CDLA-Permissive-1.0** | SEARCH |
+| **NOAA Puget Sound Nearshore Fish** (LILA) | frame probe; **murky** marine | turbid estuary, shellfish farms, fixed cameras, some with a green-blocking filter | 77,739 frames; 67,990 boxes on 30,384; rest reviewed empty | **CDLA-Permissive-1.0** | READ |
 | **Brackish** (AAU) | **murky-slice** evaluation (boxes) | turbid brackish water, LED-lit, fixed camera | ~35.6k boxes, 6 classes | **conflicting: CC BY-SA 4.0 / CC BY 4.0 / CC BY-NC-SA 4.0** | secondary only |
 | **OzFish** (AIMS) | pretraining frames only | coastal BRUV video | weak, non-exhaustive boxes | CC BY (3.0 AU vs 4.0 inconsistent) | READ |
 | **Ocean Networks Canada** | pretraining (dark, lights on/off) | deep fixed cameras, 393–985 m | timestamped observations | ONC-owned: CC BY 4.0; **partner devices vary** | SEARCH |
@@ -93,8 +94,19 @@ No URL below was guessed. Every fetcher in `talosaur.data.sources` will print th
 | | |
 |---|---|
 | Relevance | River fish-passage cameras. About 262k frames, about 162k reviewed as empty, **about 35% at night**. Excellent for search-mode **fish/no-fish** and the **dark slice**, and it teaches what "empty" looks like. |
-| Access | https://lila.science/datasets/mit-sea-grant-river-herring/ (SEARCH; LILA hosts files on public cloud buckets). The exact file URLs come from that page. |
+| Access | https://lila.science/datasets/mit-sea-grant-river-herring/ lists `https://storage.googleapis.com/public-datasets-lila/mit-river-herring/mit_river_herring.zip` (41,511,381,591 bytes, GCS crc32c `TiYf5Q==`), also unzipped on GCP, AWS and Azure (READ, 2026-09-28). |
+| Metadata | `mit_sea_grant_river_herring.json` in the zip: 262,050 frames of 480×320 PNG, 91,482 boxes on 60,877 frames, 9 fish classes, no `empty` category and no timestamps. Per-location CSVs give each clip's `status`, `time_of_day`, `train_set`, and a dated file name. In all 1,435 clips `frames_with_fish` equals the number of boxed frames, so **the 200,250 unboxed frames of the 1,430 `completed` clips are reviewed empties** (the page says ~162k). The 923 unboxed frames of the 5 clips still in annotation are unknown. `scripts/data/prep_river_herring.py` writes the COCO Camera Traps JSON the ingester needs (READ). |
 | License | **CDLA-Permissive-1.0** (SEARCH plus secondary source). |
+
+## 5b. NOAA Puget Sound Nearshore Fish (LILA): turbid marine estuary
+
+| | |
+|---|---|
+| Relevance | Underwater video frames from five mesohabitats on and around shellfish aquaculture farms in Puget Sound, WA. Green, turbid, shallow marine water: a **murky** ocean counterpart to the freshwater sources. |
+| Access | https://lila.science/datasets/noaa-puget-sound-nearshore-fish/ lists `https://storage.googleapis.com/public-datasets-lila/noaa-psnf/noaa_estuary_fish-images.zip` (7,694,934,801 bytes, crc32c `3MoJ+g==`) and `noaa_estuary_fish-annotations-2023.08.19.zip` (4,437,189 bytes, crc32c `lFk61Q==`) (READ, 2026-09-28). |
+| License | *"This data set is released under the Community Data License Agreement (permissive variant)"* (READ, LILA page). |
+| Labels | COCO Camera Traps JSON. 67,990 boxes on 30,384 frames, labelled per image as `fish`, `crab` or `fish_and_crab`; the other frames are labelled `empty`. A boolean `filter` marks frames shot through a green-blocking filter. |
+| Caveat | A few fixed deployments, so frames are highly redundant: capped at 10% of the training sampling mass in `configs/curate/v1.yaml`, like Brackish. |
 
 ## 6. Brackish dataset (Aalborg University): turbid water, LED-lit, fixed camera
 
@@ -135,7 +147,6 @@ No URL below was guessed. Every fetcher in `talosaur.data.sources` will print th
 |---|---|---|
 | **SEAMAPD21** (NOAA SEFSC) | Gulf of Mexico baited-camera reef-fish video: 90k annotations, 130 species, 26 GB in 263 tar.gz parts from `https://grunt.sefsc.noaa.gov/parr/SEAMAPD21.tar.gz.aa`… (READ, GitHub README). **No licence stated.** | Very relevant to the Gulf of Mexico. Ask SEFSC for the licence. |
 | Labeled Fishes in the Wild (NOAA SWFSC) | 3,167 ROV stills of rockfish; only a credit request, no licence | Likely public domain; confirm before use |
-| NOAA Puget Sound Nearshore Fish (LILA) | 77,739 images, CDLA-Permissive (SEARCH) | Can add later |
 | FishTrack23 | CC BY 4.0 per one source; exact collection link unverified | Verify link first |
 | UIEB / LSUI | academic, non-commercial, no redistribution | Not used |
 | TrashCan 1.0 | academic only; commercial needs JAMSTEC permission | Not used |

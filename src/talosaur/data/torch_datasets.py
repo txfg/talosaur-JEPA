@@ -20,13 +20,14 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, Sampler
 
+from talosaur.data.h5store import open_image
 from talosaur.data.labels import boxes_to_coverage, box_centroid_and_size, mask_to_coverage
 
 
 def _load_pil(path: Path):
     from PIL import Image
 
-    with Image.open(path) as im:
+    with Image.open(open_image(path)) as im:
         return im.convert("RGB")
 
 
@@ -160,7 +161,7 @@ class LabeledFrames(Dataset):
             mask_path = None
         img = img.resize((W, H), Image.Resampling.BILINEAR)
         if isinstance(mask_path, str) and mask_path:
-            with Image.open(self.root / mask_path) as m:
+            with Image.open(open_image(self.root / mask_path)) as m:
                 cov = mask_to_coverage(np.asarray(m.convert("L")) > 0, self.grid)
             valid = True
         else:

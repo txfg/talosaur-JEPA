@@ -57,7 +57,9 @@ def load_rgb(path: str | os.PathLike, max_side: int | None = None) -> np.ndarray
     """Load as uint8 RGB. For JPEGs, ``draft`` lets libjpeg decode at 1/2..1/8 scale (fast)."""
     from PIL import Image
 
-    with Image.open(path) as im:
+    from talosaur.data.h5store import open_image
+
+    with Image.open(open_image(path)) as im:
         if max_side and im.format == "JPEG":
             w, h = im.size
             im.draft("RGB", (max(1, w * max_side // max(w, h)), max(1, h * max_side // max(w, h))))
@@ -71,5 +73,7 @@ def load_rgb(path: str | os.PathLike, max_side: int | None = None) -> np.ndarray
 def image_size(path: str | os.PathLike) -> tuple[int, int]:
     from PIL import Image
 
-    with Image.open(path) as im:
+    from talosaur.data.h5store import open_image
+
+    with Image.open(open_image(path)) as im:
         return im.size

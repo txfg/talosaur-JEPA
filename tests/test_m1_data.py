@@ -520,3 +520,31 @@ def test_dedup_leakage_rule_drops_train_copy_of_test_image(tmp_path):
     keep, reason = apply_dedup(df, CurateConfig())
     assert keep.tolist() == [True, False, True]
     assert reason[1] == "dup_of_eval"
+
+
+def test_fathomnet_enumerate_random_sample(monkeypatch):
+    from talosaur.data.sources.fathomnet import enumerate_images
+
+    _fake_fathomnet(monkeypatch, [(f"u{i}", f"https://x.org/{i}.png", []) for i in range(50)], b"")
+    first = [im.uuid for im in enumerate_images(min_depth=100, max_images=10)]
+    assert first == [f"u{i}" for i in range(10)]  # default: the first ones in API order
+    a = [im.uuid for im in enumerate_images(min_depth=100, max_images=10, sample_seed=0)]
+    b = [im.uuid for im in enumerate_images(min_depth=100, max_images=10, sample_seed=0)]
+    assert a == b and len(set(a)) == 10 and a != first  # reproducible, spread over all matches
+    assert len(enumerate_images(min_depth=100, max_images=80, sample_seed=0)) == 50
+
+
+def test_patch_negatives_adds_background_away_from_boxes():
+    from talosaur.data.labels import patch_negatives, within_image_auroc
+
+    cov = np.zeros((3, 6, 6))
+    cov[0, 2:4, 2:4] = 1.0  # non-exhaustive boxes: background >= 1 cell away is usable
+    cov[1, 0, 0] = 0.5  # exhaustive boxes: every empty patch is usable
+    valid = np.array([False, True, False])  # image 2 has no boxes and isn't trusted: nothing
+    neg = patch_negatives(cov, valid, margin=1)
+    assert not neg[0, 1:5, 1:5].any() and neg[0, 0].all() and neg[0, :, 5].all()
+    assert neg[1].sum() == 35 and not neg[1, 0, 0]
+    assert not neg[2].any()
+    assert patch_negatives(cov, valid, margin=None)[0].sum() == 0  # the old rule
+    good = np.where(cov >= 0.3, 1.0, 0.0)
+    assert within_image_auroc(good, cov) == 1.0 and within_image_auroc(-good, cov) == 0.0

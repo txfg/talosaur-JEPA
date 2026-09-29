@@ -82,11 +82,13 @@ def compute_metrics_table(df, root: Path, workers: int, max_side: int, cache_pat
     """Add METRIC_COLUMNS + phash + thumb columns; cache keyed by (path, size, mtime)."""
     import pandas as pd
 
+    from talosaur.data.h5store import stat_image
+
     root = Path(root)
     keys = []
     for p in df["path"]:
-        st = (root / p).stat()
-        keys.append(f"{p}|{st.st_size}|{int(st.st_mtime)}")
+        size, mtime = stat_image(root / p)
+        keys.append(f"{p}|{size}|{mtime}")
     cache = read_table(cache_path) if cache_path.exists() else pd.DataFrame(columns=["key"])
     cache = cache.set_index("key") if len(cache) else cache
     have = set(cache.index) if len(cache) else set()

@@ -122,3 +122,20 @@ def test_count_params_and_gmacs_vit_tiny():
     assert 5.3 < p < 5.8
     assert 1.1 < g < 1.35  # analytic estimate in docs/PLAN.md: 1.25 GMACs
     _ = np
+
+
+def test_frame_rows_adds_presence_crops_for_box_only_sources():
+    pd = pytest.importorskip("pandas")
+    from talosaur.eval.harness import EvalConfig, frame_rows
+
+    rows = [
+        {"split": "train", "source": "fathomnet", "frame_label": -1, "boxes": [[0.05, 0.05, 0.2, 0.2]],
+         "box_is_animal": [True]},
+        {"split": "train", "source": "deepfish", "frame_label": 0, "boxes": [], "box_is_animal": []},
+    ]
+    df = pd.DataFrame(rows)
+    out = frame_rows(df, EvalConfig(crops_per_image=4), "train")
+    crops = out[out["source"] == "fathomnet_crops"]
+    assert len(crops) > 0 and set(crops["frame_label"]) <= {0, 1}
+    assert (out["source"] == "deepfish").sum() == 1
+    assert frame_rows(df, EvalConfig(crops_per_image=4), "train")["crop"].tolist() == out["crop"].tolist()

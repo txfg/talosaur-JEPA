@@ -221,7 +221,13 @@ def ingest_camera_traps(
                 box_labels=labels,
                 box_is_animal=[True] * len(boxes),
                 boxes_exhaustive=False,
-                extra={"location": loc, "datetime": img.get("datetime"), "seq_id": img.get("seq_id")},
+                extra={
+                    "location": loc,
+                    "datetime": img.get("datetime"),
+                    "seq_id": img.get("seq_id"),
+                    # condition labels some LILA sets carry (River Herring, Puget Sound)
+                    **{k: img[k] for k in ("time_of_day", "visibility", "habitat_type", "filter") if k in img},
+                },
             )
         )
     return records

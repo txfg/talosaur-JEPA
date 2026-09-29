@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from talosaur.data.labels import patch_negatives, within_image_auroc
 from talosaur.eval.linear import fit_logreg
 from talosaur.eval.metrics import angular_error_deg, average_precision, roc_auc, soft_centroid, tpr_at_fpr
 
@@ -145,7 +146,7 @@ class ProbeHook:
         # patch probe
         cov_tr = self.train.coverage
         pos = cov_tr >= self.pos_thr
-        neg = (cov_tr <= 0.0) & self.train.patch_valid.view(-1, 1, 1)
+        neg = torch.from_numpy(patch_negatives(cov_tr.numpy(), self.train.patch_valid.numpy()))
         D = ttr.shape[-1]
         pi = torch.nonzero(pos.reshape(-1)).squeeze(1)
         ni = torch.nonzero(neg.reshape(-1)).squeeze(1)
@@ -168,6 +169,9 @@ class ProbeHook:
             if m.any() and (lab[m] == 1).any() and (lab[m] == 0).any():
                 out[f"{prefix}patch_auroc"] = roc_auc(lab[m], prob[m])
                 out[f"{prefix}patch_ap"] = average_precision(lab[m], prob[m])
+            wia = within_image_auroc(prob, cv, self.pos_thr)
+            if np.isfinite(wia):
+                out[f"{prefix}patch_within_image_auroc"] = wia
             errs = []
             for i in range(len(self.val)):
                 c = self.val.centroid[i]
